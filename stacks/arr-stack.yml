@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  # Radarr - Movie Management
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - /root/apps/media-assistant/config/radarr:/config
+      - /mnt/cloud/gdrive/Media/Movies:/movies
+      - /downloads:/downloads
+    ports:
+      - "127.0.0.1:7878:7878"
+    networks:
+      - media-assistant
+
+  # Lidarr - Music Management
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - /root/apps/media-assistant/config/lidarr:/config
+      - /mnt/cloud/gdrive/Media/Music:/music
+      - /downloads:/downloads
+    ports:
+      - "127.0.0.1:8686:8686"
+    networks:
+      - media-assistant
+
+  # Prowlarr - Indexer Manager (for Radarr/Lidarr)
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+    volumes:
+      - /root/apps/media-assistant/config/prowlarr:/config
+    ports:
+      - "127.0.0.1:9696:9696"
+    networks:
+      - media-assistant
+
+networks:
+  media-assistant:
+    external: true
