@@ -1,0 +1,91 @@
+version: "3.8"
+
+services:
+  # Media Assistant API
+  api:
+    build:
+      context: ./src/api
+      dockerfile: Dockerfile
+    container_name: media-assistant-api
+    restart: unless-stopped
+    ports:
+      - "8003:8000"
+    environment:
+      - POSTGRES_URL=postgresql://media_assistant:mediaassistant123@postgres:5432/media_assistant
+      - REDIS_URL=redis://redis:6379/0
+      - MEDIA_API_KEY=${MEDIA_API_KEY:-dev-key}
+      - MASTER_API_KEY=${MASTER_API_KEY:-master-dev-key}
+      - JELLYFIN_URL=${JELLYFIN_URL:-https://movies.sam9scloud.in}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY}
+      - QBITTORRENT_URL=${QBITTORRENT_URL:-http://host.docker.internal:8088}
+      - PRIVATEHD_PID=${PRIVATEHD_PID}
+      - TMDB_API_KEY=${TMDB_API_KEY}
+    volumes:
+      - /mnt/cloud/gdrive/Media:/media:rw
+      - /downloads:/downloads:rw
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - media-assistant
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: media-assistant-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: media_assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mediaassistant123}
+      POSTGRES_DB: media_assistant
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./supabase/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "54322:5432"
+    networks:
+      - media-assistant
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U media_assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: media-assistant-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - media-assistant
+    command: redis-server --appendonly yes
+
+  # pgAdmin (optional, for DB management)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: media-assistant-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@media.local
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - media-assistant
+    profiles:
+      - dev
+
+volumes:
+  postgres_data:
+  redis_data:
+  pgadmin_data:
+
+networks:
+  media-assistant:
+    driver: bridge
