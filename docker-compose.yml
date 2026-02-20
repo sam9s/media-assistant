@@ -9,7 +9,7 @@ services:
     container_name: media-assistant-api
     restart: unless-stopped
     ports:
-      - "8003:8000"
+      - "127.0.0.1:8003:8000"  # Localhost only - accessed via Caddy
     environment:
       - POSTGRES_URL=postgresql://media_assistant:mediaassistant123@postgres:5432/media_assistant
       - REDIS_URL=redis://redis:6379/0
@@ -42,7 +42,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./supabase/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "54324:5432"
+      - "127.0.0.1:54324:5432"  # Localhost only
     networks:
       - media-assistant
     healthcheck:
@@ -57,7 +57,7 @@ services:
     container_name: media-assistant-redis
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"  # Localhost only
     volumes:
       - redis_data:/data
     networks:
