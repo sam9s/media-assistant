@@ -371,8 +371,8 @@ async def health_check():
 
 
 @app.get("/")
-async def root():
-    """API info"""
+async def root(api_key: str = Depends(verify_api_key)):
+    """API info - requires authentication"""
     return {
         "name": "Media Assistant API",
         "version": "1.0.0",
