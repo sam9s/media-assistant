@@ -42,7 +42,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./supabase/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "54322:5432"
+      - "54324:5432"
     networks:
       - media-assistant
     healthcheck:
