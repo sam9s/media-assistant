@@ -1,0 +1,51 @@
+services:
+  sam-media-api:
+    build: .
+    container_name: sam-media-api
+    restart: unless-stopped
+    ports:
+      - "8765:8000"   # 0.0.0.0 binding so qBittorrent can call us via 172.17.0.1:8765
+    env_file:
+      - .env
+    volumes:
+      - /srv/downloads:/downloads                           # shared with qBittorrent — rename files here
+      - /mnt/cloud/gdrive/Media:/mnt/cloud/gdrive/Media    # rclone FUSE mount = gdrive = Jellyfin library
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    depends_on:
+      - jackett
+    networks:
+      - internal
+
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9117:9117"   # UI on localhost only (use SSH tunnel to access)
+    volumes:
+      - jackett_config:/config
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    depends_on:
+      - flaresolverr
+    networks:
+      - internal
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  jackett_config:
