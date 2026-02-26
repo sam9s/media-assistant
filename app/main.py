@@ -360,52 +360,47 @@ async def on_complete(request: Request, _: str = Depends(require_api_key)):
     suffix = f" ({year})" if year else ""
     renamed: list[str] = []
 
-    # 2. Rename the content — single file or top-level folder
+    # 2. Keep qBittorrent source paths untouched (preserves seeding integrity).
+    #    Apply clean naming only at destination.
     content = req.content_path.rstrip("/")
-    if os.path.isfile(content):
-        ext = os.path.splitext(content)[1]
-        new_path = os.path.join(os.path.dirname(content), f"{clean}{suffix}{ext}")
-        if content != new_path and not os.path.exists(new_path):
-            os.rename(content, new_path)
-            renamed.append(f"{clean}{suffix}{ext}")
-            content = new_path
 
-    elif os.path.isdir(content):
-        # Rename the folder
-        parent = os.path.dirname(content)
-        new_dir = os.path.join(parent, f"{clean}{suffix}")
-        if content != new_dir and not os.path.exists(new_dir):
-            os.rename(content, new_dir)
-            renamed.append(f"{clean}{suffix}/")
-            content = new_dir
-
-        # Rename the largest video file inside the folder
-        main_video = _largest_video(content)
-        if main_video:
-            ext = os.path.splitext(main_video)[1]
-            new_video = os.path.join(os.path.dirname(main_video), f"{clean}{suffix}{ext}")
-            if main_video != new_video and not os.path.exists(new_video):
-                os.rename(main_video, new_video)
-                renamed.append(f"{clean}{suffix}{ext}")
-
-    # 3. Copy renamed file to Google Drive FUSE mount (/mnt/cloud/gdrive/Media/...).
+    # 3. Copy content to Google Drive FUSE mount (/mnt/cloud/gdrive/Media/...),
+    #    using a clean destination name.
     #    This single copy serves both purposes:
     #    - Permanent Google Drive archive (via rclone FUSE mount)
     #    - Jellyfin library (Jellyfin mounts /mnt/cloud/gdrive/Media as /media internally)
     media_dest = MEDIA_PATHS.get(req.category)
     if media_dest and os.path.exists(content):
         os.makedirs(media_dest, exist_ok=True)
-        dest = os.path.join(media_dest, os.path.basename(content))
-        if not os.path.exists(dest):
-            if os.path.isfile(content):
+        if os.path.isfile(content):
+            ext = os.path.splitext(content)[1]
+            dest_name = f"{clean}{suffix}{ext}" if ext else f"{clean}{suffix}"
+            dest = os.path.join(media_dest, dest_name)
+            if not os.path.exists(dest):
                 shutil.copy2(content, dest)
-            elif os.path.isdir(content):
+                renamed.append(dest_name)
+
+        elif os.path.isdir(content):
+            dest_name = f"{clean}{suffix}"
+            dest = os.path.join(media_dest, dest_name)
+            if not os.path.exists(dest):
                 try:
                     shutil.copytree(content, dest, copy_function=shutil.copy)
                 except shutil.Error:
                     # rclone FUSE mounts reject metadata ops (copystat) after data copy
                     # The file data was copied successfully; ignore metadata errors
                     pass
+                renamed.append(f"{dest_name}/")
+
+            # Rename only inside destination folder (source remains untouched for seeding).
+            if os.path.isdir(dest):
+                main_video = _largest_video(dest)
+                if main_video:
+                    ext = os.path.splitext(main_video)[1]
+                    new_video = os.path.join(os.path.dirname(main_video), f"{clean}{suffix}{ext}")
+                    if main_video != new_video and not os.path.exists(new_video):
+                        os.rename(main_video, new_video)
+                        renamed.append(f"{clean}{suffix}{ext}")
 
     # 4. Trigger Jellyfin library refresh so the new title appears immediately
     jf_refreshed = False
