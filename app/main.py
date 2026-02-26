@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import json
 import logging
 import os
 import re as _re
@@ -314,18 +315,32 @@ async def get_status(title: Optional[str] = None, _: str = Depends(require_api_k
 
 
 @app.post("/complete")
-async def on_complete(req: CompleteRequest, _: str = Depends(require_api_key)):
+async def on_complete(request: Request, _: str = Depends(require_api_key)):
     """
     Called by qBittorrent's 'Run External Program' when a torrent finishes.
     Renames the downloaded file(s) to 'Title (Year).ext' and triggers Jellyfin refresh.
 
     Configure in qBittorrent → Settings → Downloads → Run on torrent completion:
-      curl -s -X POST http://172.17.0.1:8765/complete \\
-        -H "X-API-Key: YOUR_KEY" \\
-        -H "Content-Type: application/json" \\
+      curl -s -X POST http://172.17.0.1:8765/complete \
+        -H "X-API-Key: YOUR_KEY" \
+        -H "Content-Type: application/json" \
         -d "{\"name\":\"%N\",\"category\":\"%L\",\"content_path\":\"%F\",\"info_hash\":\"%I\"}"
     Note: 172.17.0.1 is the Docker bridge gateway (host IP as seen from inside containers).
+    Note: qBittorrent may send backslash-escaped JSON ({\"key\":\"val\"}); handled below.
     """
+    body = await request.body()
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        # qBittorrent executes curl without shell processing, so \" stays literal
+        # Replace \" with " to get valid JSON, then retry
+        data = json.loads(body.replace(b'\\"', b'"'))
+
+    try:
+        req = CompleteRequest(**data)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     # 1. Retrieve clean title + year from the tag we stored at download time
     try:
         title, year = await qbt.get_torrent_tags(req.info_hash)
