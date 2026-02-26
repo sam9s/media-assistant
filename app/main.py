@@ -1,13 +1,18 @@
 import asyncio
 import itertools
+import logging
 import os
 import re as _re
 import shutil
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
+
+logger = logging.getLogger("uvicorn.error")
 
 from app.config import settings
 from app.iptorrents import search_iptorrents
@@ -18,6 +23,14 @@ from app.qbittorrent import QBittorrentClient
 from app.tmdb import TMDBClient
 
 app = FastAPI(title="Sam's Media API", version="2.1.0")
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    body = await request.body()
+    logger.error("422 on %s — body: %r — errors: %s", request.url.path, body, exc.errors())
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
 
 # ---------------------------------------------------------------------------
 # API Key security
@@ -372,7 +385,12 @@ async def on_complete(req: CompleteRequest, _: str = Depends(require_api_key)):
             if os.path.isfile(content):
                 shutil.copy2(content, dest)
             elif os.path.isdir(content):
-                shutil.copytree(content, dest)
+                try:
+                    shutil.copytree(content, dest, copy_function=shutil.copy)
+                except shutil.Error:
+                    # rclone FUSE mounts reject metadata ops (copystat) after data copy
+                    # The file data was copied successfully; ignore metadata errors
+                    pass
 
     # 4. Trigger Jellyfin library refresh so the new title appears immediately
     jf_refreshed = False
