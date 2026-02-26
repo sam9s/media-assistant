@@ -4,8 +4,8 @@
 **Approach:** Custom Media API + Raven (OpenClaw) Integration
 **VPS:** sam9scloud.in (IP: 69.62.73.167)
 **Deployed path on VPS:** `/root/apps/sam-media-api/`
-**Version:** 2.1.0
-**Status:** LIVE — Deployed and tested (2026-02-22)
+**Version:** 2.2.0
+**Status:** LIVE — Deployed, patched, and re-validated end-to-end (2026-02-26)
 
 ---
 
@@ -14,7 +14,7 @@
 A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) full control over:
 - Searching torrent trackers (Jackett + iptorrents) for movies, TV, music
 - Adding torrents to qBittorrent with correct save paths and title tags
-- Receiving a webhook from qBittorrent on download completion → renaming → copying to Jellyfin library / Google Drive
+- Receiving a webhook from qBittorrent on download completion → copying with clean destination naming to Jellyfin library / Google Drive
 - Triggering Jellyfin library refresh so content appears immediately
 
 **What was NOT built (future phases):**
@@ -46,8 +46,8 @@ sam-media-api  (port 8765 on VPS host, :8000 inside container)
     │
     └── /complete  ◀── qBittorrent fires this on torrent completion
                        1. Reads "Title|Year" tag from qBT
-                       2. Renames file: messy_name.mkv → Title (Year).mkv
-                       3. shutil.copy2 to /mnt/cloud/gdrive/Media/{category}/
+                       2. Leaves source file/folder name untouched (preserves seeding integrity)
+                       3. Copies to /mnt/cloud/gdrive/Media/{category}/ using clean destination name
                           (= Google Drive FUSE mount = Jellyfin library simultaneously)
                        4. Jellyfin refresh → appears in library immediately
 ```
@@ -77,7 +77,10 @@ media_assistant/
 │       └── SKILL.md     # Raven skill — how Raven calls this API
 ├── docs/
 │   ├── PROJECT_PLAN.md        ← THIS FILE
-│   └── INFRASTRUCTURE_AUDIT.md
+│   ├── INFRASTRUCTURE_AUDIT.md
+│   └── DR_RUNBOOK.md          # Backup + restore procedure
+├── scripts/
+│   └── backup_config_bundle.sh # Encrypted config-only backup script
 ├── docker-compose.yml   # sam-media-api + jackett containers
 ├── Dockerfile
 ├── requirements.txt
@@ -136,8 +139,8 @@ Request:
 ### `POST /complete`
 **Auth required.** Called by qBittorrent on torrent completion. NOT called manually.
 - Reads title+year from qBT tag
-- Renames file(s) to `Title (Year).ext`
-- Copies to Google Drive FUSE mount (= Jellyfin library)
+- Keeps qB source file/folder names unchanged (for stable post-restart seeding)
+- Copies to Google Drive FUSE mount (= Jellyfin library) as clean destination name `Title (Year).*`
 - Fires Jellyfin library refresh
 
 ---
@@ -161,7 +164,7 @@ Request:
 | What | VPS host path | Container-internal path | Notes |
 |---|---|---|---|
 | qBittorrent downloads | `/srv/downloads` | `/downloads` (in qBT + our container) | Both containers mount this |
-| Completed downloads | `/srv/downloads/complete/Movies/Hollywood/` | `/downloads/complete/Movies/Hollywood/` | Our API renames files here |
+| Completed downloads | `/srv/downloads/complete/Movies/Hollywood/` | `/downloads/complete/Movies/Hollywood/` | qB source files stay untouched for seeding |
 | Google Drive FUSE | `/mnt/cloud/gdrive` | `/mnt/cloud/gdrive` (same) | rclone FUSE, allow_other |
 | Jellyfin library | `/mnt/cloud/gdrive/Media/` | `/media/` (inside Jellyfin container) | One write = gdrive + Jellyfin |
 | qBT watch folder | `/srv/torrents/watch` | `/watch` (in qBT container) | Manual .torrent drops |
@@ -203,6 +206,17 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
+    depends_on:
+      - flaresolverr
+    networks:
+      - internal
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
     networks:
       - internal
 
@@ -244,19 +258,25 @@ JELLYFIN_API_KEY=<key>
 
 # TMDB
 TMDB_API_KEY=<key>
+
+# Config backup encryption
+BACKUP_PASSPHRASE=<strong backup passphrase>
 ```
 
 ---
 
-## 9. WHAT WAS TESTED AND CONFIRMED WORKING (2026-02-22)
+## 9. WHAT WAS TESTED AND CONFIRMED WORKING (2026-02-22, 2026-02-26)
 
 | Test | Result |
 |---|---|
 | `GET /health` returns `{"status":"ok"}` | PASS |
 | `POST /complete` with dummy 1MB `.mkv` file | PASS |
-| File renamed: `Test.Movie.2024.1080p.BluRay.mkv` → `Test Movie (2024).mkv` | PASS |
+| Destination named cleanly: `Test Movie (2024).mkv` | PASS |
 | File copied to `/mnt/cloud/gdrive/Media/Movies/Hollywood/` | PASS |
 | Jellyfin `refresh_library()` fired | PASS |
+| `/complete` keeps source path unchanged and renames destination only | PASS |
+| qB restart after completion retains seeding for newly completed torrent | PASS |
+| qB upload queue issue fixed (`queueing_enabled=false`, active limits set to 20) | PASS |
 | Cleanup of test files | Done |
 
 **Test command used:**
@@ -273,26 +293,34 @@ curl -s -X POST http://localhost:8765/complete \
 
 ---
 
-## 10. PENDING — MANUAL SETUP IN qBITTORRENT UI
+## 10. qBITTORRENT SETTINGS (CURRENT PRODUCTION STATE)
 
-These two settings must be configured once in the qBittorrent web UI (`downloads.sam9scloud.in`):
+These settings are configured in production (`downloads.sam9scloud.in`) and stored in:
+`/opt/dokploy/volumes/qbittorrent/config/qBittorrent/qBittorrent.conf`
 
-### A. "Run on completion" webhook
-Settings → Downloads → **Run External Program on torrent completion:**
+### A. "Run on completion" webhook (enabled)
+Settings → Downloads → **Run External Program on torrent completion**
 ```
 curl -s -X POST http://172.17.0.1:8765/complete -H "X-API-Key: <API_KEY>" -H "Content-Type: application/json" -d "{\"name\":\"%N\",\"category\":\"%L\",\"content_path\":\"%F\",\"info_hash\":\"%I\"}"
 ```
 - `172.17.0.1` = Docker bridge gateway (host IP as seen from inside qBT container)
 - `%N` = torrent name, `%L` = category label, `%F` = file/folder path, `%I` = info hash
 - Fires **after download completes**, not when added
+- qB config block: `[AutoRun] enabled=true`
 
-### B. 30-day seeding auto-delete
+### B. 30-day seeding auto-delete (enabled)
 Settings → BitTorrent → Seeding Limits:
 - Enable: When seeding time reaches **43200 minutes** (30 days)
 - Action: **Remove torrent and delete data**
 
 **Effect:** qBittorrent keeps seeding for 30 days, then deletes its local copy from `/srv/downloads/complete/`.
 Google Drive and Jellyfin keep the file permanently (copied at completion time).
+
+### C. Queueing limits (updated)
+- `Session\QueueingSystemEnabled=false` (seed all completed torrents; avoid `queuedUP` cap)
+- `Session\MaxActiveTorrents=20`
+- `Session\MaxActiveDownloads=20`
+- `Session\MaxActiveUploads=20`
 
 ---
 
@@ -336,10 +364,23 @@ When Raven doesn't know the category, it asks: "Hollywood, Hindi, TV-Hollywood, 
 - **Old media-assistant project**: `/root/apps/media-assistant/` — older, heavier version with Postgres+Redis. Our project is the lean replacement at `/root/apps/sam-media-api/`.
 - **rclone**: Already installed at `/usr/bin/rclone`. `gdrive:` remote already configured. FUSE-mounted at `/mnt/cloud/gdrive` with `allow_other` so Docker containers can write to it.
 - **Jackett**: Running inside the same Docker Compose stack, reachable as `http://jackett:9117` from `sam-media-api`.
+- **Config backup implemented**: `scripts/backup_config_bundle.sh` creates encrypted config-only backups.
+- **Backup destination**: `/mnt/cloud/gdrive/Backups/sam-media-assistant-config/`
 
 ---
 
-## 14. FUTURE PHASES (not yet built)
+## 14. DISASTER RECOVERY
+
+- Full DR instructions: `docs/DR_RUNBOOK.md`
+- Backup command:
+  `BACKUP_PASSPHRASE='<passphrase>' ./scripts/backup_config_bundle.sh`
+- Backup scope: config + secrets + service state (no `/srv/downloads` media payload)
+- Output per backup:
+  encrypted archive (`.tar.gz.enc`) + checksum (`.sha256`) + metadata (`.metadata.txt`)
+
+---
+
+## 15. FUTURE PHASES (not yet built)
 
 - **Immich photo search** — `GET /photos/search`
 - **AzuraCast radio control** — `POST /radio/play`, `GET /radio/nowplaying`
