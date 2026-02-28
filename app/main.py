@@ -19,11 +19,13 @@ from app.config import settings
 from app.iptorrents import search_iptorrents
 from app.jackett import search_jackett
 from app.jellyfin import JellyfinClient
+from app.librarian import router as librarian_router
 from app.privatehd import search_privatehd
 from app.qbittorrent import QBittorrentClient
 from app.tmdb import TMDBClient
 
-app = FastAPI(title="Sam's Media API", version="2.1.0")
+app = FastAPI(title="Sam's Media API", version="2.2.0")
+app.include_router(librarian_router)
 
 
 @app.exception_handler(RequestValidationError)

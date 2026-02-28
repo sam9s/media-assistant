@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # API Security — secret key OpenClaw must send in X-API-Key header
     API_KEY: str
 
+    # Kavita — ebook library manager
+    KAVITA_URL: str = "http://localhost:8091"
+    KAVITA_USERNAME: str = ""
+    KAVITA_PASSWORD: str = ""
+
     class Config:
         env_file = ".env"
 
