@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     API_KEY: str
 
     # Kavita — ebook library manager
-    KAVITA_URL: str = "http://localhost:8091"
+    # Use 172.17.0.1 (Docker bridge host IP) so the sam-media-api container
+    # can reach Kavita on the host port — same pattern as qBittorrent webhook.
+    KAVITA_URL: str = "http://172.17.0.1:8091"
     KAVITA_USERNAME: str = ""
     KAVITA_PASSWORD: str = ""
 

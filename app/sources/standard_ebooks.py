@@ -1,112 +1,105 @@
 """
-Standard Ebooks search client — searches standardebooks.org.
-No API key required. Returns EPUB downloads only (highest quality).
-Uses the OPDS catalog endpoint for structured data.
+Standard Ebooks search client — scrapes standardebooks.org search results.
+Best source: professional EPUB formatting, DRM-free, public domain.
+HTML structure: articles with typeof="schema:Book" about="/ebooks/author/title[/translator]"
+EPUB download URL pattern: https://standardebooks.org{about}/downloads/{slug}.epub
 """
-from typing import Optional
 import re
+from typing import Optional
 
 import httpx
 
-SEARCH_URL = "https://standardebooks.org/ebooks"
-OPDS_SEARCH_URL = "https://standardebooks.org/feeds/opds/all"
+SE_BASE = "https://standardebooks.org"
+SE_SEARCH_URL = f"{SE_BASE}/ebooks"
 
 
 async def search_standard_ebooks(query: str, limit: int = 5) -> list[dict]:
     """
-    Search Standard Ebooks via their OPDS feed + title filter.
+    Search Standard Ebooks. Parses the HTML search results page.
     Returns a list of result dicts with standardised fields.
     """
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(
-                SEARCH_URL,
+                SE_SEARCH_URL,
                 params={"query": query},
-                headers={"Accept": "application/atom+xml, application/xml, text/xml, */*"},
+                headers={"User-Agent": "Mozilla/5.0 (compatible; SamAssist/2.0)"},
+                follow_redirects=True,
             )
             resp.raise_for_status()
-            text = resp.text
+            html = resp.text
     except Exception:
         return []
 
-    return _parse_html_results(text, query, limit)
-
-
-def _parse_html_results(html: str, query: str, limit: int) -> list[dict]:
-    """
-    Parse Standard Ebooks search results HTML.
-    Extracts title, author, EPUB download URL, and cover.
-    """
-    results = []
-
-    # Find all book blocks — SE uses <li> elements with class containing "book"
-    book_blocks = re.findall(
-        r'<li[^>]*class="[^"]*book[^"]*"[^>]*>(.*?)</li>',
+    # Find all book entries: typeof="schema:Book" about="/ebooks/..."
+    # Pattern: about="/ebooks/author-name/book-title[/translator]"
+    book_paths = re.findall(
+        r'typeof="schema:Book"[^>]+about="(/ebooks/[^"]+)"',
         html,
-        re.DOTALL,
     )
+    # Also catch the reverse attribute order
+    book_paths += re.findall(
+        r'about="(/ebooks/[^"]+)"[^>]+typeof="schema:Book"',
+        html,
+    )
+    # Deduplicate preserving order
+    seen: set = set()
+    unique_paths: list = []
+    for p in book_paths:
+        if p not in seen:
+            seen.add(p)
+            unique_paths.append(p)
 
-    for block in book_blocks:
+    results = []
+    for path in unique_paths:
         if len(results) >= limit:
             break
-        title = _extract_tag(block, "title") or _extract_attr(block, "img", "alt", "")
-        author = _extract_meta_author(block)
-        epub_url = _extract_epub_link(block)
-        cover_url = _extract_cover(block)
 
-        if not epub_url or not title:
+        title, author = _parse_se_path(path)
+        if not title:
             continue
 
+        # SE EPUB slug = path segments joined with underscores (strip leading /ebooks/)
+        slug = path.lstrip("/").replace("ebooks/", "", 1).replace("/", "_")
+        epub_url = f"{SE_BASE}{path}/downloads/{slug}.epub"
+
         results.append({
-            "title": title.strip(),
-            "author": author.strip() if author else "Unknown",
-            "year": None,
+            "title": title,
+            "author": author,
+            "year": None,  # Standard Ebooks doesn't include year in search results
             "format": "epub",
             "download_url": epub_url,
-            "cover_url": cover_url,
+            "cover_url": f"{SE_BASE}{path}/downloads/{slug}_cover.jpg",
             "source": "Standard Ebooks",
-            "source_id": epub_url,
+            "source_id": path,
             "size_mb": None,
         })
 
     return results
 
 
-def _extract_tag(html: str, tag: str) -> Optional[str]:
-    m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", html, re.DOTALL | re.IGNORECASE)
-    if m:
-        return re.sub(r"<[^>]+>", "", m.group(1)).strip()
-    return None
+def _parse_se_path(path: str) -> tuple[str, str]:
+    """
+    Convert /ebooks/alexandre-dumas/the-count-of-monte-cristo/chapman-and-hall
+    to title='The Count of Monte Cristo', author='Alexandre Dumas'.
+    """
+    # Strip leading /ebooks/
+    parts = path.strip("/").split("/")
+    # parts[0] = author slug, parts[1] = title slug, parts[2+] = translator (optional)
+    if len(parts) < 2:
+        return "", ""
+
+    author = _slug_to_title(parts[1 if parts[0] == "ebooks" else 0])
+    title = _slug_to_title(parts[2 if parts[0] == "ebooks" else 1])
+
+    # Reorder: remove 'ebooks' prefix if present
+    actual_parts = parts[1:] if parts[0] == "ebooks" else parts
+    if len(actual_parts) >= 2:
+        author = _slug_to_title(actual_parts[0])
+        title = _slug_to_title(actual_parts[1])
+    return title, author
 
 
-def _extract_attr(html: str, tag: str, attr: str, default: str = "") -> str:
-    m = re.search(rf'<{tag}[^>]*\s{attr}="([^"]*)"', html, re.IGNORECASE)
-    return m.group(1) if m else default
-
-
-def _extract_meta_author(block: str) -> Optional[str]:
-    m = re.search(r'<p[^>]*class="[^"]*author[^"]*"[^>]*>(.*?)</p>', block, re.DOTALL | re.IGNORECASE)
-    if m:
-        return re.sub(r"<[^>]+>", "", m.group(1)).strip()
-    return None
-
-
-def _extract_epub_link(block: str) -> Optional[str]:
-    # Look for .epub download link
-    m = re.search(r'href="(/ebooks/[^"]+\.epub)"', block)
-    if m:
-        return f"https://standardebooks.org{m.group(1)}"
-    # Also try kepub or other epub variants
-    m = re.search(r'href="(/ebooks/[^"]+/[^"]+)"', block)
-    if m:
-        path = m.group(1)
-        if "epub" in path.lower():
-            return f"https://standardebooks.org{path}"
-    return None
-
-
-def _extract_cover(block: str) -> Optional[str]:
-    m = re.search(r'src="(/images/covers/[^"]+)"', block)
-    if m:
-        return f"https://standardebooks.org{m.group(1)}"
-    return None
+def _slug_to_title(slug: str) -> str:
+    """Convert 'the-count-of-monte-cristo' -> 'The Count Of Monte Cristo'."""
+    return slug.replace("-", " ").title()
