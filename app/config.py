@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     KAVITA_USERNAME: str = ""
     KAVITA_PASSWORD: str = ""
 
+    # Anna's Archive — optional DDoS-Guard session cookie for slow_download access.
+    # Leave blank until you have a verified browser session from annas-archive.gl.
+    # Set to the full Cookie header value from a logged-in browser session.
+    ANNA_ARCHIVE_COOKIE: str = ""
+
     class Config:
         env_file = ".env"
 

@@ -1,13 +1,17 @@
 """
 Librarian router — handles ebook search, download, and Kavita library management.
-Searches Gutendex (Gutenberg), Standard Ebooks, and Archive.org in parallel.
+Searches Standard Ebooks, Gutendex, Archive.org, and Anna's Archive in parallel.
 Downloads EPUB/PDF files and routes them to the correct Kavita library folder.
-Triggers Kavita library scan after download.
+Validates EPUBs before triggering Kavita scan to avoid Kavita parse failures.
+Triggers Kavita library scan after a successful, validated download.
 """
 import asyncio
+import io
 import logging
 import os
 import re as _re
+import xml.etree.ElementTree as _ET
+import zipfile
 from typing import Optional
 
 import httpx
@@ -17,9 +21,10 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.kavita import KavitaClient
+from app.sources.archive_org import search_archive_org
+from app.sources.annas_archive import resolve_annas_download, search_annas_archive
 from app.sources.gutendex import search_gutendex
 from app.sources.standard_ebooks import search_standard_ebooks
-from app.sources.archive_org import search_archive_org
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -91,6 +96,59 @@ def _build_save_path(category: str, author: str, title: str, fmt: str) -> str:
     return os.path.join(base, safe_author, f"{safe_title}{ext}")
 
 
+def _validate_epub(content: bytes) -> tuple[bool, str]:
+    """
+    Lightweight structural EPUB validation.
+    Returns (is_valid, error_message).
+
+    Checks:
+      1. File is a valid ZIP archive
+      2. Contains META-INF/container.xml
+      3. container.xml points to a valid OPF package file
+      4. OPF package contains a non-empty <dc:title> element
+
+    This catches the files that Kavita rejects at parse time with
+    "Unable to parse any meaningful information out of file".
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile:
+        return False, "File is not a valid ZIP/EPUB archive"
+
+    names = zf.namelist()
+
+    if "META-INF/container.xml" not in names:
+        return False, "EPUB is missing META-INF/container.xml"
+
+    try:
+        container_xml = zf.read("META-INF/container.xml")
+        container = _ET.fromstring(container_xml)
+    except Exception as exc:
+        return False, f"Could not parse META-INF/container.xml: {exc}"
+
+    ns = {"ns": "urn:oasis:names:tc:opendocument:xmlns:container"}
+    rootfiles = container.findall(".//ns:rootfile", ns)
+    if not rootfiles:
+        return False, "container.xml has no <rootfile> element"
+
+    opf_path = rootfiles[0].get("full-path", "")
+    if not opf_path or opf_path not in names:
+        return False, f"OPF package file '{opf_path}' not found in EPUB"
+
+    try:
+        opf_xml = zf.read(opf_path)
+        opf = _ET.fromstring(opf_xml)
+    except Exception as exc:
+        return False, f"Could not parse OPF package '{opf_path}': {exc}"
+
+    dc_ns = {"dc": "http://purl.org/dc/elements/1.1/"}
+    title_el = opf.find(".//dc:title", dc_ns)
+    if title_el is None or not (title_el.text or "").strip():
+        return False, "EPUB OPF package has no <dc:title> metadata"
+
+    return True, ""
+
+
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
@@ -101,7 +159,12 @@ class BookSearchRequest(BaseModel):
 
 
 class BookDownloadRequest(BaseModel):
-    download_url: str
+    # Standard sources (SE, Gutenberg, Archive.org): provide download_url
+    download_url: Optional[str] = None
+    # Anna's Archive: provide source="AnnasArchive" and source_id="/md5/..."
+    source: Optional[str] = None
+    source_id: Optional[str] = None
+    # Common fields
     title: str
     author: str = "Unknown"
     category: str  # novel | comic | magazine
@@ -124,31 +187,35 @@ async def librarian_health():
 @router.post("/search")
 async def search_books(req: BookSearchRequest, _: str = Depends(require_api_key)):
     """
-    Search Gutendex (Gutenberg), Standard Ebooks, and Archive.org in parallel.
-    Results are ranked: Standard Ebooks first, Gutenberg second, Archive.org third.
-    EPUB is always preferred over PDF.
+    Search Standard Ebooks, Gutenberg, Archive.org, and Anna's Archive in parallel.
+    Results are ranked: Standard Ebooks → Gutenberg → Archive.org → Anna's Archive.
+    EPUB is always preferred over PDF. Deduplicates by title.
+    Anna's Archive results include source_id instead of download_url — use
+    source="AnnasArchive" + source_id when calling /download for those results.
     """
     gut_task = asyncio.create_task(search_gutendex(req.query, req.limit))
     se_task = asyncio.create_task(search_standard_ebooks(req.query, req.limit))
     ao_task = asyncio.create_task(search_archive_org(req.query, req.limit))
+    aa_task = asyncio.create_task(search_annas_archive(req.query, req.limit))
 
     # Also check if it's already in Kavita
     kavita_task = asyncio.create_task(kavita.is_in_library(req.query))
 
-    _gut, _se, _ao, _already_in_library = await asyncio.gather(
-        gut_task, se_task, ao_task, kavita_task,
+    _gut, _se, _ao, _aa, _already_in_library = await asyncio.gather(
+        gut_task, se_task, ao_task, aa_task, kavita_task,
         return_exceptions=True,
     )
 
     gut_results: list = _gut if isinstance(_gut, list) else []
     se_results: list = _se if isinstance(_se, list) else []
     ao_results: list = _ao if isinstance(_ao, list) else []
+    aa_results: list = _aa if isinstance(_aa, list) else []
     already_in_library: bool = _already_in_library if isinstance(_already_in_library, bool) else False
 
-    # Priority: Standard Ebooks → Gutenberg → Archive.org
-    combined = se_results + gut_results + ao_results
+    # Priority: Standard Ebooks → Gutenberg → Archive.org → Anna's Archive
+    combined = se_results + gut_results + ao_results + aa_results
 
-    # Deduplicate by title (case-insensitive)
+    # Deduplicate by title (case-insensitive) — first occurrence wins (highest priority)
     seen_titles: set[str] = set()
     deduped = []
     for result in combined:
@@ -179,8 +246,12 @@ async def search_books(req: BookSearchRequest, _: str = Depends(require_api_key)
 @router.post("/download")
 async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_key)):
     """
-    Download an ebook from the given URL, save to the correct folder,
-    and trigger a Kavita library scan.
+    Download an ebook and save it to the correct Kavita folder.
+    For standard sources (SE/Gutenberg/Archive.org): pass download_url.
+    For Anna's Archive results: pass source="AnnasArchive" and source_id="/md5/...".
+
+    EPUBs are validated for structural integrity before triggering a Kavita scan.
+    If validation fails the file is removed from disk and a 422 is returned.
 
     Category determines where the file is saved:
       - novel    → /mnt/cloud/gdrive/Media/Books/{Author}/{Title}.epub
@@ -191,6 +262,29 @@ async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_k
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown category '{req.category}'. Valid: {list(KAVITA_PATHS.keys())}",
+        )
+
+    # Resolve download URL
+    if req.source == "AnnasArchive":
+        if not req.source_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="source_id (e.g. '/md5/abc123') is required when source='AnnasArchive'",
+            )
+        try:
+            aa_cookie = settings.ANNA_ARCHIVE_COOKIE or None
+            download_url = await resolve_annas_download(req.source_id, cookie=aa_cookie)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            )
+    elif req.download_url:
+        download_url = req.download_url
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide either download_url or source='AnnasArchive' with source_id",
         )
 
     # Build destination path
@@ -204,13 +298,14 @@ async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_k
             "message": "File already exists — skipping download",
             "saved_to": save_path,
             "already_existed": True,
+            "kavita_safe": True,
             "scan_triggered": False,
         }
 
     # Download the file
     try:
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-            resp = await client.get(req.download_url)
+            resp = await client.get(download_url)
             resp.raise_for_status()
             content = resp.content
     except Exception as exc:
@@ -219,7 +314,7 @@ async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_k
             detail=f"Failed to download ebook: [{type(exc).__name__}] {exc}",
         )
 
-    # Validate it looks like an ebook (basic check)
+    # Validate minimum size
     if len(content) < 1000:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -239,7 +334,32 @@ async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_k
 
     size_mb = round(len(content) / (1024 * 1024), 2)
 
-    # Trigger Kavita library scan
+    # EPUB structural validation — run after saving, delete file if invalid
+    kavita_safe = True
+    epub_error = None
+    if req.format.lower() == "epub":
+        valid, err = _validate_epub(content)
+        if not valid:
+            kavita_safe = False
+            epub_error = err
+            try:
+                os.remove(save_path)
+                # Remove the author folder if it's now empty
+                if not os.listdir(save_dir):
+                    os.rmdir(save_dir)
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": f"EPUB validation failed — file rejected before Kavita scan",
+                    "epub_error": epub_error,
+                    "kavita_safe": False,
+                    "hint": "Try a different result (better source) for this title",
+                },
+            )
+
+    # Trigger Kavita library scan (only for valid files)
     scan_triggered = False
     scan_error = None
     try:
@@ -260,6 +380,7 @@ async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_k
         "size_mb": size_mb,
         "format": req.format,
         "already_existed": False,
+        "kavita_safe": kavita_safe,
         "scan_triggered": scan_triggered,
         "scan_error": scan_error,
     }
@@ -302,7 +423,6 @@ async def scan_library(req: LibraryScanRequest, _: str = Depends(require_api_key
 async def library_status(title: Optional[str] = None, _: str = Depends(require_api_key)):
     """Check if a title is already in Kavita library."""
     if not title:
-        # Return list of all libraries
         try:
             libraries = await kavita.get_libraries()
         except Exception as exc:
