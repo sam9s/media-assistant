@@ -1,13 +1,12 @@
 """
-Anna's Archive search client — scrapes annas-archive.gl (and mirror fallbacks).
+Anna's Archive search client -- scrapes annas-archive.gl (and mirror fallbacks).
 
-SEARCH: Works fully — returns results with source="AnnasArchive" and
+SEARCH: Works fully -- returns results with source="AnnasArchive" and
         source_id="/md5/{hash}" instead of a direct download_url.
 
-RESOLVER: Structured for future activation. Currently all Anna's Archive
-          download endpoints are protected by DDoS-Guard (requires JS execution)
-          or partner sites that block server IPs. If ANNA_ARCHIVE_COOKIE is set
-          in .env, it will be used as the DDoS-Guard bypass session cookie.
+RESOLVER: Two-step resolution via Libgen (primary) or Anna's slow_download (fallback).
+          Libgen path: GET libgen.li/ads.php?md5={md5} -> parse [GET] link -> return URL.
+          slow_download path: only attempted if ANNA_ARCHIVE_COOKIE is set in .env.
 
 HTML structure confirmed via live VPS testing (2026-03-03):
   - Search result blocks: div.flex.pt-3.pb-3.border-b
@@ -85,10 +84,10 @@ async def _find_working_mirror(query: str) -> tuple[Optional[str], Optional[str]
 def _parse_metadata_block(text: str) -> dict:
     """
     Parse the metadata string like:
-      "English [en] · EPUB · 1.4MB · 2019 · 📘 Book (non-fiction) · ..."
+      "English [en] · EPUB · 1.4MB · 2019 · Book (non-fiction) · ..."
     Returns dict with format, size_mb, year keys.
     """
-    parts = [p.strip() for p in text.split("·")]
+    parts = [p.strip() for p in text.split("\u00b7")]
     fmt = None
     size_mb = None
     year = None
@@ -109,14 +108,14 @@ def _parse_metadata_block(text: str) -> dict:
                     size_mb = round(num * 1024, 1)
                 else:
                     size_mb = round(num, 2)
-        # Year: 4-digit number between 1000–2099
+        # Year: 4-digit number between 1000-2099
         elif re.match(r'^(1[0-9]{3}|20[0-9]{2})$', part_clean):
             year = int(part_clean)
 
     return {"format": fmt, "size_mb": size_mb, "year": year}
 
 
-def _parse_search_results(html: str, limit: int) -> list[dict]:
+def _parse_search_results(html: str, limit: int, mirror: str) -> list[dict]:
     """
     Parse Anna's Archive search results HTML into a list of normalised result dicts.
     Deduplicates by title, preferring EPUB over PDF within AA results.
@@ -162,8 +161,8 @@ def _parse_search_results(html: str, limit: int) -> list[dict]:
         # Normalise: strip trailing commas, clean author list separators
         title = title.strip().rstrip(",")
         if author:
-            # Anna's Archive may list "Author1, Author2" — keep first only for folder naming
-            author = author.split(",")[0].strip()
+            # Anna's Archive may list "Author1; Author2" or "Author1, Author2"
+            author = re.split(r'[;,]', author)[0].strip()
 
         # Extract format/size/year from the metadata block
         meta_div = block.find("div", class_=lambda c: c and "text-gray-800" in c and "font-semibold" in c)
@@ -186,7 +185,7 @@ def _parse_search_results(html: str, limit: int) -> list[dict]:
             "author": author or "Unknown",
             "year": meta.get("year"),
             "format": fmt,
-            "download_url": None,       # No direct URL — resolver needed
+            "download_url": f"{mirror}{source_id}",  # Clickable detail page for manual-mode downloads
             "source_id": source_id,     # "/md5/{hash}"
             "cover_url": None,
             "source": "AnnasArchive",
@@ -199,7 +198,7 @@ def _parse_search_results(html: str, limit: int) -> list[dict]:
 async def search_annas_archive(query: str, limit: int = 5) -> list[dict]:
     """
     Search Anna's Archive for ebooks. Returns up to `limit` results.
-    Results include source_id="/md5/..." and NO download_url.
+    Results include source_id="/md5/..." and a clickable detail-page download_url.
     The caller must use resolve_annas_download() to get a direct file URL.
 
     Returns [] on any failure (matches existing source pattern).
@@ -209,31 +208,66 @@ async def search_annas_archive(query: str, limit: int = 5) -> list[dict]:
         if not mirror or not html:
             logger.warning("Anna's Archive: no working mirror found for query %r", query)
             return []
-        return _parse_search_results(html, limit)
+        return _parse_search_results(html, limit, mirror)
     except Exception as exc:
         logger.warning("Anna's Archive search failed: %s", exc)
         return []
 
 
+async def _resolve_via_libgen(md5: str) -> Optional[str]:
+    """
+    Try to resolve a direct download URL via the libgen.li ads page.
+    Returns the get.php URL if found, None if libgen.li is unreachable or
+    doesn't have the file.
+
+    Flow: GET ads.php?md5={md5} -> parse [GET] link -> return full get.php URL.
+    The returned URL is valid across different httpx client sessions (key is
+    time-based, not session-tied -- confirmed on live VPS 2026-03-04).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=20, headers=_HEADERS, follow_redirects=True) as client:
+            resp = await client.get(f"https://libgen.li/ads.php?md5={md5}")
+        if resp.status_code != 200:
+            logger.debug("Libgen ads.php returned HTTP %s for md5 %s", resp.status_code, md5)
+            return None
+        soup = BeautifulSoup(resp.text, "html.parser")
+        get_link = soup.find("a", href=re.compile(r"get\.php\?md5="))
+        if not get_link:
+            logger.debug("Libgen ads.php: no get.php link found for md5 %s", md5)
+            return None
+        href = get_link["href"]
+        if isinstance(href, str) and href.startswith("http"):
+            return href
+        return f"https://libgen.li/{href.lstrip('/')}"
+    except Exception as exc:
+        logger.debug("Libgen resolution failed for md5 %s: %s", md5, exc)
+        return None
+
+
 async def resolve_annas_download(source_id: str, cookie: Optional[str] = None) -> str:
     """
-    Attempt to resolve an Anna's Archive source_id ("/md5/{hash}") to a direct
-    download URL.
+    Resolve an Anna's Archive source_id ("/md5/{hash}") to a direct download URL.
 
-    Current status (2026-03-03):
-      - /slow_download/ and /fast_download/ are protected by DDoS-Guard (requires JS)
-      - Libgen partner sites block server-side requests from data-centre IPs
-      - If ANNA_ARCHIVE_COOKIE is set in .env, it is used as the DDoS-Guard
-        bypass session cookie, which may allow slow_download to work
+    Resolution order:
+      1. Libgen (libgen.li ads.php -> get.php) -- works without any auth from VPS
+      2. Anna's slow_download -- only attempted if ANNA_ARCHIVE_COOKIE is set in .env;
+         DDoS-Guard protected, requires a valid browser session cookie to bypass
+      3. RuntimeError -> 503 with manual download URL
 
     Raises:
-        RuntimeError: always, until a working download path is confirmed.
-                      Message describes exactly why the download failed.
+        RuntimeError: if all resolution paths fail.
     """
     mirror = _active_mirror or MIRRORS[0]
-    md5 = source_id.lstrip("/md5/").strip("/")
+    # Safely extract just the hex md5 hash from "/md5/{hash}" or "md5/{hash}"
+    md5 = re.sub(r"^/?md5/", "", source_id).strip("/")
 
-    # Attempt slow_download[0] — if a session cookie is available, it might work
+    # --- Primary path: Libgen ---
+    libgen_url = await _resolve_via_libgen(md5)
+    if libgen_url:
+        logger.info("Anna's Archive resolved via Libgen for md5 %s", md5)
+        return libgen_url
+
+    # --- Fallback path: Anna's slow_download with cookie ---
     download_url = f"{mirror}/slow_download/{md5}/0/0"
     headers = dict(_HEADERS)
     if cookie:
@@ -245,15 +279,15 @@ async def resolve_annas_download(source_id: str, cookie: Optional[str] = None) -
 
         if _is_ddos_guard(resp.text):
             raise RuntimeError(
-                "Anna's Archive slow_download is protected by DDoS-Guard. "
-                "A browser session cookie (ANNA_ARCHIVE_COOKIE in .env) is required "
-                "to bypass this. Download manually from: "
+                "Anna's Archive slow_download is protected by DDoS-Guard and Libgen "
+                "could not resolve the file. "
+                "A browser session cookie (ANNA_ARCHIVE_COOKIE in .env) may help bypass "
+                "the DDoS-Guard check. Download manually from: "
                 f"{mirror}/md5/{md5}"
             )
 
         ct = resp.headers.get("content-type", "")
         if resp.status_code == 200 and any(t in ct for t in ("epub", "pdf", "octet-stream", "application/")):
-            # Actual file returned — return the final URL for the downloader to use
             return str(resp.url)
 
         raise RuntimeError(
