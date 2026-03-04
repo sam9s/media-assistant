@@ -48,8 +48,7 @@ services:
     container_name: slskd
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5030:5030"   # Web UI (use SSH tunnel to access)
-      - "0.0.0.0:5031:5031"     # API (reachable from sam-media-api via 172.17.0.1:5031)
+      - "0.0.0.0:5030:5030"     # Web UI + API (reachable from Docker at 172.17.0.1:5030)
       - "0.0.0.0:2234:2234/tcp" # Soulseek P2P (must be open to internet)
     volumes:
       - /root/apps/slskd/slskd.yml:/app/slskd.yml:ro
