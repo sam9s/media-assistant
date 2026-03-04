@@ -23,7 +23,7 @@ from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 
 from app.config import settings
-from app.music_enrichment import enrich_and_deliver
+from app.music_enrichment import enrich_and_deliver, enrich_single_track
 from app.navidrome import search_album as navidrome_search
 
 logger = logging.getLogger("uvicorn.error")
@@ -73,7 +73,7 @@ async def _slskd_headers() -> dict:
 # ---------------------------------------------------------------------------
 # In-memory stores (reset on container restart — acceptable for our use case)
 # ---------------------------------------------------------------------------
-_search_cache: dict[str, list] = {}   # search_id → list of result dicts
+_search_cache: dict[str, dict] = {}   # search_id → {mode, results}
 _downloads: dict[str, dict] = {}      # download_id → {language, peer, files, folder, status, ...}
 
 # ---------------------------------------------------------------------------
@@ -84,6 +84,7 @@ class MusicSearchRequest(BaseModel):
     query: str
     artist: Optional[str] = None
     album: Optional[str] = None
+    mode: str = "album"   # "album" | "track"
 
 
 class MusicDownloadRequest(BaseModel):
@@ -171,6 +172,34 @@ def _parse_responses(responses: list) -> list[dict]:
     return sorted(folders.values(), key=lambda x: (x["best_tier"], -x["total_size"]))[:10]
 
 
+def _parse_responses_tracks(responses: list) -> list[dict]:
+    """
+    Return individual FLAC files (track mode) instead of grouped album folders.
+    Filters lossy formats. Sorts by quality tier then size desc. Returns up to 10.
+    """
+    tracks = []
+    for resp in responses:
+        username = resp.get("username", "")
+        for f in resp.get("files") or []:
+            tier, label = _quality_label(f)
+            if tier == 9:
+                continue
+            filename = f.get("filename", "")
+            size = f.get("size") or 0
+            folder = _remote_folder(filename)
+            basename = filename.replace("\\", "/").rsplit("/", 1)[-1] if "/" in filename.replace("\\", "/") else filename
+            tracks.append({
+                "peer_username": username,
+                "filename": filename,
+                "file_basename": basename,
+                "folder_path": folder,
+                "size_mb": round(size / 1_048_576, 1),
+                "best_tier": tier,
+                "quality_label": label,
+            })
+    return sorted(tracks, key=lambda x: (x["best_tier"], -x["size_mb"]))[:10]
+
+
 # ---------------------------------------------------------------------------
 # slskd search
 # ---------------------------------------------------------------------------
@@ -217,7 +246,7 @@ async def _slskd_search(query: str, timeout_ms: int = 8000) -> list:
             headers=hdrs,
         )
 
-    return _parse_responses(responses)
+    return responses
 
 
 # ---------------------------------------------------------------------------
@@ -296,13 +325,67 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     _downloads[download_id]["status"] = "done"
 
 
+async def _poll_and_enrich_track(download_id: str, peer_username: str, filename: str) -> None:
+    """Monitor slskd until a single file completes, then run single-track enrichment."""
+    logger.info("Track poll: %s (%s, %s)", download_id, peer_username, filename)
+    info = _downloads.get(download_id)
+    if not info:
+        return
+
+    _downloads[download_id]["status"] = "downloading"
+
+    for _ in range(360):  # max 60 min
+        await asyncio.sleep(10)
+        try:
+            hdrs = await _slskd_headers()
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
+                    headers=hdrs,
+                )
+            data = r.json() if r.status_code == 200 else {}
+            completed = failed = 0
+            for directory in (data.get("directories") or []):
+                for tf in directory.get("files") or []:
+                    if tf.get("filename") == filename:
+                        st = (tf.get("state") or "").lower()
+                        if "completed" in st:
+                            completed += 1
+                        elif "errored" in st or "cancelled" in st:
+                            failed += 1
+            logger.info("Track download %s: completed=%d failed=%d", download_id, completed, failed)
+            if completed + failed >= 1:
+                break
+        except Exception as e:
+            logger.warning("Track poll error: %s", e)
+
+    _downloads[download_id]["status"] = "enriching"
+
+    # slskd saves single file to {downloads_dir}/{last_folder_component}/{basename}
+    folder_name = _remote_folder(filename).replace("\\", "/").rsplit("/", 1)[-1]
+    file_basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    download_dir = "/mnt/cloud/gdrive/Media/Music/Downloads"
+    local_path = f"{download_dir}/{folder_name}/{file_basename}"
+
+    await asyncio.sleep(3)  # let filesystem flush
+
+    await enrich_single_track(
+        flac_path=local_path,
+        language=info["language"],
+        title_hint=info.get("title", ""),
+        artist_hint=info.get("artist", ""),
+    )
+    _downloads[download_id]["status"] = "done"
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
 @router.post("/search")
 async def music_search(req: MusicSearchRequest, _: str = Depends(_require_api_key)):
-    """Search Soulseek via slskd, return up to 10 ranked FLAC results."""
+    """Search Soulseek via slskd, return up to 10 ranked FLAC results.
+    mode='album' (default) groups by folder; mode='track' returns individual files."""
     if not settings.SLSKD_PASSWORD:
         raise HTTPException(status_code=503, detail="SLSKD_PASSWORD not configured")
 
@@ -310,25 +393,42 @@ async def music_search(req: MusicSearchRequest, _: str = Depends(_require_api_ke
     if req.artist and req.album:
         already_in_navidrome = await navidrome_search(req.artist, req.album)
 
-    results_raw = await _slskd_search(req.query)
+    raw_responses = await _slskd_search(req.query)
+    mode = req.mode if req.mode in ("album", "track") else "album"
+
+    if mode == "track":
+        results_raw = _parse_responses_tracks(raw_responses)
+    else:
+        results_raw = _parse_responses(raw_responses)
 
     search_id = str(uuid.uuid4())
-    _search_cache[search_id] = results_raw
+    _search_cache[search_id] = {"mode": mode, "results": results_raw}
 
     results = []
-    for i, r in enumerate(results_raw, 1):
-        folder_name = r["folder_path"].replace("\\", "/").rsplit("/", 1)[-1]
-        results.append({
-            "index": i,
-            "peer_username": r["peer_username"],
-            "folder": folder_name,
-            "file_count": len(r["files"]),
-            "size_mb": round(r["total_size"] / 1_048_576, 1),
-            "quality": r["quality_label"],
-        })
+    if mode == "track":
+        for i, r in enumerate(results_raw, 1):
+            results.append({
+                "index": i,
+                "peer_username": r["peer_username"],
+                "file_basename": r["file_basename"],
+                "size_mb": r["size_mb"],
+                "quality": r["quality_label"],
+            })
+    else:
+        for i, r in enumerate(results_raw, 1):
+            folder_name = r["folder_path"].replace("\\", "/").rsplit("/", 1)[-1]
+            results.append({
+                "index": i,
+                "peer_username": r["peer_username"],
+                "folder": folder_name,
+                "file_count": len(r["files"]),
+                "size_mb": round(r["total_size"] / 1_048_576, 1),
+                "quality": r["quality_label"],
+            })
 
     return {
         "search_id": search_id,
+        "mode": mode,
         "already_in_navidrome": already_in_navidrome,
         "results": results,
     }
@@ -341,38 +441,72 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
     if not cached:
         raise HTTPException(status_code=404, detail="Search ID not found or expired. Re-search first.")
 
+    mode = cached.get("mode", "album")
+    results_raw = cached.get("results", [])
+
     idx = req.result_index - 1
-    if idx < 0 or idx >= len(cached):
-        raise HTTPException(status_code=400, detail=f"result_index must be 1–{len(cached)}")
+    if idx < 0 or idx >= len(results_raw):
+        raise HTTPException(status_code=400, detail=f"result_index must be 1–{len(results_raw)}")
 
-    result = cached[idx]
+    result = results_raw[idx]
     peer = result["peer_username"]
-    files = result["files"]
-
     download_id = str(uuid.uuid4())
-    _downloads[download_id] = {
-        "status": "starting",
-        "language": req.language.lower(),
-        "peer_username": peer,
-        "files": files,  # list of {filename, size} dicts
-        "folder_path": result["folder_path"],
-        "artist": "",
-        "album": "",
-    }
 
-    await _slskd_download_files(peer, files)
-    _downloads[download_id]["status"] = "downloading"
+    if mode == "track":
+        filename = result["filename"]
+        file_size = int(result["size_mb"] * 1_048_576)
+        file_list = [{"filename": filename, "size": file_size}]
 
-    asyncio.create_task(_poll_and_enrich(download_id, peer, len(files)))
+        _downloads[download_id] = {
+            "status": "starting",
+            "language": req.language.lower(),
+            "peer_username": peer,
+            "files": file_list,
+            "filename": filename,
+            "title": result.get("file_basename", "").rsplit(".", 1)[0],
+            "artist": "",
+        }
 
-    return {
-        "success": True,
-        "download_id": download_id,
-        "files": len(files),
-        "peer": peer,
-        "quality": result["quality_label"],
-        "language": req.language,
-    }
+        await _slskd_download_files(peer, file_list)
+        _downloads[download_id]["status"] = "downloading"
+        asyncio.create_task(_poll_and_enrich_track(download_id, peer, filename))
+
+        return {
+            "success": True,
+            "download_id": download_id,
+            "files": 1,
+            "peer": peer,
+            "track": result.get("file_basename", ""),
+            "quality": result["quality_label"],
+            "language": req.language,
+            "destination": "Misc/",
+        }
+
+    else:
+        files = result["files"]
+
+        _downloads[download_id] = {
+            "status": "starting",
+            "language": req.language.lower(),
+            "peer_username": peer,
+            "files": files,  # list of {filename, size} dicts
+            "folder_path": result["folder_path"],
+            "artist": "",
+            "album": "",
+        }
+
+        await _slskd_download_files(peer, files)
+        _downloads[download_id]["status"] = "downloading"
+        asyncio.create_task(_poll_and_enrich(download_id, peer, len(files)))
+
+        return {
+            "success": True,
+            "download_id": download_id,
+            "files": len(files),
+            "peer": peer,
+            "quality": result["quality_label"],
+            "language": req.language,
+        }
 
 
 @router.get("/status/{download_id}")

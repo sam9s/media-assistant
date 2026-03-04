@@ -290,6 +290,126 @@ async def enrich_and_deliver(
     logger.info("Navidrome scan: %s", scan_result)
 
 
+# ---------------------------------------------------------------------------
+# Single-track helpers
+# ---------------------------------------------------------------------------
+
+def _mb_recording_meta(recording_id: str) -> Optional[dict]:
+    """Look up a MusicBrainz recording to get track title + artist.
+    Returns {"artist": str, "title": str} — distinct from _mb_release_from_recording
+    which returns album-level data."""
+    try:
+        result = musicbrainzngs.get_recording_by_id(
+            recording_id,
+            includes=["artists"],
+        )
+        recording = result.get("recording", {})
+        title = recording.get("title", "")
+        artist = ""
+        credit = recording.get("artist-credit", [])
+        if credit:
+            first = credit[0]
+            if isinstance(first, dict):
+                artist = first.get("artist", {}).get("name", "")
+        if title or artist:
+            return {"artist": artist, "title": title}
+    except Exception as e:
+        logger.warning("MusicBrainz recording meta error for %s: %s", recording_id, e)
+    return None
+
+
+async def _theaudiodb_track_cover(artist: str, title: str) -> Optional[str]:
+    """Search TheAudioDB for a track and return the first available thumb URL."""
+    key = settings.THEAUDIODB_API_KEY or "2"
+    url = f"https://www.theaudiodb.com/api/v1/json/{key}/searchtrack.php"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, params={"s": artist, "t": title})
+        tracks = r.json().get("track") or []
+        for t in tracks:
+            cover = t.get("strTrackThumb") or t.get("strAlbumThumb")
+            if cover:
+                return cover
+    except Exception as e:
+        logger.warning("TheAudioDB track cover error: %s", e)
+    return None
+
+
+async def enrich_single_track(
+    flac_path: str,
+    language: str,
+    title_hint: str = "",
+    artist_hint: str = "",
+) -> None:
+    """
+    Enrich and deliver a single FLAC track to the Misc/ folder.
+
+    :param flac_path: Absolute path to the FLAC file.
+    :param language: "english" | "hindi" | "punjabi"
+    :param title_hint: Track title fallback if AcoustID fails.
+    :param artist_hint: Artist name fallback if AcoustID fails.
+    """
+    logger.info("Single-track enrichment started: %s → %s/Misc", flac_path, language)
+
+    file = Path(flac_path)
+    if not file.exists():
+        logger.error("Track enrichment: file not found: %s", flac_path)
+        return
+
+    dest_root = LANGUAGE_DIRS.get(language.lower(), LANGUAGE_DIRS["english"])
+
+    # --- Step 1+2: Fingerprint → MBID → recording title + artist ---
+    recording_id = await _fingerprint_to_mbid(flac_path)
+    meta = None
+    if recording_id:
+        meta = await asyncio.to_thread(_mb_recording_meta, recording_id)
+
+    artist = (meta or {}).get("artist") or artist_hint or "Unknown Artist"
+    title  = (meta or {}).get("title")  or title_hint  or file.stem
+
+    logger.info("Track enrichment metadata: artist=%r title=%r", artist, title)
+
+    # --- Step 3: Fetch cover art ---
+    cover_bytes = None
+    cover_url = await _theaudiodb_track_cover(artist, title)
+    if cover_url:
+        cover_bytes = await _fetch_bytes(cover_url)
+
+    # --- Step 4: Embed cover into FLAC ---
+    if cover_bytes:
+        await asyncio.to_thread(_embed_cover_into_flac, flac_path, cover_bytes)
+
+    # --- Step 5: Rename file ---
+    safe_filename = _safe_name(f"{artist} - {title}.flac")
+    renamed = file.parent / safe_filename
+    if file != renamed:
+        try:
+            file.rename(renamed)
+            file = renamed
+        except Exception as e:
+            logger.warning("Track rename failed: %s", e)
+
+    # --- Step 6: Ensure Misc/ destination exists ---
+    misc_dir = Path(dest_root) / "Misc"
+    misc_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Step 7: Move to Misc/ ---
+    dest = misc_dir / file.name
+    try:
+        if dest.exists():
+            logger.warning("Destination already exists, skipping: %s", dest)
+        else:
+            shutil.move(str(file), str(dest))
+            logger.info("Track enrichment delivered: %s", dest)
+    except Exception as e:
+        logger.error("Track move failed %s → %s: %s", file, dest, e)
+        return
+
+    # --- Step 8: Navidrome scan ---
+    scan_result = await trigger_scan()
+    logger.info("Navidrome scan after track delivery: %s", scan_result)
+
+
 def _detect_hires(flac_files: list) -> bool:
     """Check if any FLAC file has > 16-bit depth."""
     for f in flac_files:

@@ -183,6 +183,73 @@ If result #1 is Hi-Res but Sam doesn't mention quality, point it out:
 
 ---
 
+## When Sam Wants a Single Track
+
+Use `mode: "track"` in the search request. Results show individual files instead of album folders.
+
+### Search (track mode)
+```
+POST $MEDIA_API_URL/music/search
+{
+  "query": "Bohemian Rhapsody Queen FLAC",
+  "mode": "track"
+}
+```
+
+Response `results[]` contains individual files:
+- `index` — 1-based
+- `file_basename` — display name (e.g. `"Bohemian Rhapsody.flac"`)
+- `size_mb` — file size
+- `quality` — `"FLAC"` or `"Hi-Res FLAC (24bit 96kHz)"`
+
+### Download (same endpoint, no change)
+```
+POST $MEDIA_API_URL/music/download
+{
+  "search_id": "...",
+  "result_index": 1,
+  "language": "english"
+}
+```
+
+Response includes `"destination": "Misc/"` — the track goes to `Music/English/Misc/Artist - Title.flac`.
+
+### Workflow for single tracks
+
+1. Call `POST /music/search` with `mode: "track"`
+2. Present results:
+```
+🎵 Found 5 FLAC tracks for "Bohemian Rhapsody":
+
+1️⃣ Bohemian Rhapsody.flac — 45 MB | FLAC
+2️⃣ 05 - Bohemian Rhapsody.flac — 43 MB | FLAC
+3️⃣ Bohemian Rhapsody (Remaster).flac — 48 MB | Hi-Res FLAC (24bit 96kHz)
+4️⃣ Bohemian_Rhapsody.flac — 44 MB | FLAC
+5️⃣ Bohemian Rhapsody.flac — 41 MB | FLAC
+
+English, Hindi, or Punjabi? Which result?
+```
+3. **WAIT** for Sam's pick + language.
+4. Call `/music/download` — single file enqueued to slskd.
+5. After success:
+```
+⬇️ Downloading "Bohemian Rhapsody.flac" (FLAC)
+🔁 Will be enriched and saved to Music/English/Misc/ automatically.
+✅ Will appear in Navidrome shortly.
+```
+
+### Track vs Album — when to use which
+
+| Sam says | mode |
+|---|---|
+| "download the album" / "get the full album" | `album` (default) |
+| "just that one song" / "single track" / specific song name | `track` |
+| Ambiguous — could be either | Ask: "Full album or just the track?" |
+
+Track destination is always `{language}/Misc/` — no folder, just a single renamed FLAC file.
+
+---
+
 ## Personality
 
 Concise. No essays. Emojis for status. No copyright disclaimers. This is Sam's personal server and personal music collection.
