@@ -28,6 +28,10 @@ from app.navidrome import search_album as navidrome_search
 
 logger = logging.getLogger("uvicorn.error")
 
+# Stuck-peer detection timeouts
+_STUCK_NO_START_SECS = 600   # 10 min with 0 bytes → peer unresponsive → cancel
+_STUCK_STALL_SECS    = 300   # 5 min since last byte → transfer stalled → cancel
+
 router = APIRouter(prefix="/music", tags=["music"])
 
 # ---------------------------------------------------------------------------
@@ -253,6 +257,21 @@ async def _slskd_search(query: str, timeout_ms: int = 8000) -> list:
 # slskd download
 # ---------------------------------------------------------------------------
 
+async def _slskd_cancel_download(peer: str, transfer_id: str) -> None:
+    """Cancel and remove a single slskd transfer."""
+    try:
+        hdrs = await _slskd_headers()
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.delete(
+                f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer}/{transfer_id}",
+                headers=hdrs,
+                params={"remove": "true"},
+            )
+        logger.info("Cancelled slskd transfer %s / %s", peer, transfer_id)
+    except Exception as e:
+        logger.warning("Failed to cancel slskd transfer %s: %s", transfer_id, e)
+
+
 async def _slskd_download_files(peer_username: str, file_list: list[dict]) -> None:
     """Queue all files from a peer in a single batch POST."""
     hdrs = await _slskd_headers()
@@ -278,6 +297,12 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
 
     _downloads[download_id]["status"] = "downloading"
 
+    our_files = {f["filename"] for f in info.get("files", [])}
+    _start = time.monotonic()
+    _last_bytes: int = 0
+    _last_progress = _start
+    _transfer_ids: dict[str, str] = {}   # filename → slskd transfer id
+
     for _ in range(360):  # max 60 min
         await asyncio.sleep(10)
         try:
@@ -288,12 +313,15 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                     headers=hdrs,
                 )
             data = r.json() if r.status_code == 200 else {}
-            # files is a list of {filename, size} dicts — extract just the filenames for matching
-            our_files = {f["filename"] for f in info.get("files", [])}
             completed = failed = 0
+            _cur_total_bytes: int = 0
             for directory in (data.get("directories") or []):
                 for tf in directory.get("files") or []:
                     if tf.get("filename") in our_files:
+                        tid = tf.get("id", "")
+                        if tid:
+                            _transfer_ids[tf["filename"]] = tid
+                        _cur_total_bytes += int(tf.get("bytesTransferred") or 0)
                         st = (tf.get("state") or "").lower()
                         if "completed" in st:
                             completed += 1
@@ -302,9 +330,29 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
             logger.info("Download %s: %d/%d done, %d failed", download_id, completed, file_count, failed)
             if completed + failed >= file_count:
                 break
+            # Stuck-peer detection
+            _now = time.monotonic()
+            if _cur_total_bytes > _last_bytes:
+                _last_bytes = _cur_total_bytes
+                _last_progress = _now
+            if _transfer_ids and not (completed or failed):
+                no_start = (_last_bytes == 0) and ((_now - _start) >= _STUCK_NO_START_SECS)
+                stalled  = (_last_bytes > 0)  and ((_now - _last_progress) >= _STUCK_STALL_SECS)
+                if no_start or stalled:
+                    reason = "unresponsive for 10 minutes" if no_start else "stalled for 5 minutes"
+                    logger.warning("Album %s: peer %s %s — cancelling", download_id, peer_username, reason)
+                    for tid in _transfer_ids.values():
+                        await _slskd_cancel_download(peer_username, tid)
+                    _downloads[download_id]["status"]  = "stuck"
+                    _downloads[download_id]["message"] = (
+                        f"Peer {peer_username} was {reason}. Download cancelled."
+                    )
+                    return
         except Exception as e:
             logger.warning("Transfer poll error: %s", e)
 
+    if _downloads[download_id].get("status") != "downloading":
+        return  # was marked stuck inside the loop
     _downloads[download_id]["status"] = "enriching"
 
     # Derive local folder path: slskd saves to {downloads_dir}/{album_folder_name}/
@@ -334,6 +382,12 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
 
     _downloads[download_id]["status"] = "downloading"
 
+    _start = time.monotonic()
+    _last_bytes: int = 0
+    _last_progress = _start
+    _transfer_id: Optional[str] = None
+    _cur_bytes: int = 0
+
     for _ in range(360):  # max 60 min
         await asyncio.sleep(10)
         try:
@@ -345,20 +399,42 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                 )
             data = r.json() if r.status_code == 200 else {}
             completed = failed = 0
+            _cur_bytes = 0
             for directory in (data.get("directories") or []):
                 for tf in directory.get("files") or []:
                     if tf.get("filename") == filename:
+                        _transfer_id = tf.get("id") or _transfer_id
+                        _cur_bytes = int(tf.get("bytesTransferred") or 0)
                         st = (tf.get("state") or "").lower()
                         if "completed" in st:
                             completed += 1
                         elif "errored" in st or "cancelled" in st:
                             failed += 1
-            logger.info("Track download %s: completed=%d failed=%d", download_id, completed, failed)
+            logger.info("Track download %s: completed=%d failed=%d bytes=%d", download_id, completed, failed, _cur_bytes)
             if completed + failed >= 1:
                 break
+            # Stuck-peer detection
+            _now = time.monotonic()
+            if _cur_bytes > _last_bytes:
+                _last_bytes = _cur_bytes
+                _last_progress = _now
+            if _transfer_id is not None and not (completed or failed):
+                no_start = (_last_bytes == 0) and ((_now - _start) >= _STUCK_NO_START_SECS)
+                stalled  = (_last_bytes > 0)  and ((_now - _last_progress) >= _STUCK_STALL_SECS)
+                if no_start or stalled:
+                    reason = "unresponsive for 10 minutes" if no_start else "stalled for 5 minutes"
+                    logger.warning("Track %s: peer %s %s — cancelling", download_id, peer_username, reason)
+                    await _slskd_cancel_download(peer_username, _transfer_id)
+                    _downloads[download_id]["status"]  = "stuck"
+                    _downloads[download_id]["message"] = (
+                        f"Peer {peer_username} was {reason}. Download cancelled."
+                    )
+                    return
         except Exception as e:
             logger.warning("Track poll error: %s", e)
 
+    if _downloads[download_id].get("status") != "downloading":
+        return  # was marked stuck inside the loop
     _downloads[download_id]["status"] = "enriching"
 
     # slskd saves single file to {downloads_dir}/{last_folder_component}/{basename}
@@ -515,9 +591,12 @@ async def music_status(download_id: str, _: str = Depends(_require_api_key)):
     info = _downloads.get(download_id)
     if not info:
         raise HTTPException(status_code=404, detail="Download ID not found")
-    return {
+    resp: dict = {
         "download_id": download_id,
         "status": info.get("status"),
         "language": info.get("language"),
         "peer": info.get("peer_username"),
     }
+    if info.get("message"):
+        resp["message"] = info["message"]
+    return resp

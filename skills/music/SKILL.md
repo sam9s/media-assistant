@@ -125,6 +125,16 @@ Ask both questions in one message. No need for two separate prompts.
 ✅ Done — check Navidrome
 ```
 
+### When status is `"stuck"`
+
+If `GET /music/status/{id}` returns `"stuck"`:
+```
+⚠️ Peer {peer} was {message} — download cancelled automatically.
+
+Re-searching now...
+```
+Then immediately call `POST /music/search` again with the same query + mode and present fresh results exactly as in step 4. Sam can pick a different peer.
+
 ---
 
 ## What the Enrichment Pipeline Does (for context)
