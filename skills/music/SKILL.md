@@ -145,13 +145,24 @@ Sam does not need to do anything — the album appears in Navidrome automaticall
 
 ## Language → Destination Mapping
 
+### Albums
 | Sam says | `language` value | Saved to |
 |---|---|---|
 | English / Western | `english` | `Music/English/Artist - Album (Year) [FLAC]/` |
 | Hindi / Bollywood | `hindi` | `Music/Hindi/Artist - Album (Year) [FLAC]/` |
 | Punjabi | `punjabi` | `Music/Punjabi/Artist - Album (Year) [FLAC]/` |
 
-When unsure, ask: "English, Hindi, or Punjabi?"
+### Single tracks
+| Sam says | `language` value | Saved to |
+|---|---|---|
+| English / Western | `english` | `Music/English/Misc/Artist - Title.flac` |
+| Hindi / Bollywood | `hindi` | `Music/Hindi/Misc/Artist - Title.flac` |
+| Punjabi | `punjabi` | `Music/Punjabi/Artist - Title.flac` ← no Misc subfolder |
+
+**Rule:** Punjabi tracks go directly into the Punjabi folder (no Misc). English and Hindi tracks always go into their respective Misc/ subfolder.
+
+When unsure (albums): ask "English, Hindi, or Punjabi?"
+When unsure (single tracks): ask "English Misc, Hindi Misc, or Punjabi?"
 
 ---
 
@@ -227,7 +238,7 @@ Response includes `"destination": "Misc/"` — the track goes to `Music/English/
 4️⃣ Bohemian_Rhapsody.flac — 44 MB | FLAC
 5️⃣ Bohemian Rhapsody.flac — 41 MB | FLAC
 
-English, Hindi, or Punjabi? Which result?
+English Misc, Hindi Misc, or Punjabi? Which result?
 ```
 3. **WAIT** for Sam's pick + language.
 4. Call `/music/download` — single file enqueued to slskd.
@@ -246,7 +257,7 @@ English, Hindi, or Punjabi? Which result?
 | "just that one song" / "single track" / specific song name | `track` |
 | Ambiguous — could be either | Ask: "Full album or just the track?" |
 
-Track destination is always `{language}/Misc/` — no folder, just a single renamed FLAC file.
+Track destination: English → `English/Misc/`, Hindi → `Hindi/Misc/`, Punjabi → `Punjabi/` (no Misc subfolder).
 
 ---
 

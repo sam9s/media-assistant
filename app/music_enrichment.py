@@ -389,12 +389,17 @@ async def enrich_single_track(
         except Exception as e:
             logger.warning("Track rename failed: %s", e)
 
-    # --- Step 6: Ensure Misc/ destination exists ---
-    misc_dir = Path(dest_root) / "Misc"
-    misc_dir.mkdir(parents=True, exist_ok=True)
+    # --- Step 6: Determine destination directory ---
+    # Punjabi single tracks go directly into Punjabi/ (no Misc subfolder).
+    # English and Hindi single tracks always go into {language}/Misc/.
+    if language.lower() == "punjabi":
+        dest_dir = Path(dest_root)
+    else:
+        dest_dir = Path(dest_root) / "Misc"
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Step 7: Move to Misc/ ---
-    dest = misc_dir / file.name
+    # --- Step 7: Move to destination ---
+    dest = dest_dir / file.name
     try:
         if dest.exists():
             logger.warning("Destination already exists, skipping: %s", dest)
