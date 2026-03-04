@@ -54,6 +54,85 @@ GET $MEDIA_API_URL/status?title=Robocop
 
 Returns active qBittorrent downloads + Jellyfin match if title provided.
 
+### Search subtitles (manual-first flow)
+```
+POST $MEDIA_API_URL/subtitles/search
+{
+  "title": "Black Hawk Down",
+  "year": 2001,
+  "original_name": "Black Hawk Down 2001 Extended 1080p BluRay DTS x264-MoS",
+  "media_type": "movie",
+  "limit": 10
+}
+```
+
+Response includes:
+- `exact_match_found` - true only when a subtitle release exactly matches `original_name`
+- `exact_match` - the matching subtitle record, when present
+- `auto_download_allowed` - only true for exact match
+- `manual_decision_required` - true when results exist but exact match does not
+- `fallback_candidates[]` - closest non-exact options for Sam to approve manually
+
+### Download a chosen subtitle
+```
+POST $MEDIA_API_URL/subtitles/download
+{
+  "media_path": "/mnt/cloud/gdrive/Media/Movies/Hollywood/Black Hawk Down (2001).mkv",
+  "download_url": "https://dl.subdl.com/subtitle/482175-187274.zip",
+  "language": "en",
+  "release_name": "Black.Hawk.Down.[2001].[Eng].[Extended]",
+  "replace_existing": true
+}
+```
+
+This replaces the current sidecar subtitle when `replace_existing` is true.
+
+### Try a fallback subtitle by rank
+```
+POST $MEDIA_API_URL/subtitles/try-fallback
+{
+  "media_path": "/mnt/cloud/gdrive/Media/Movies/Hollywood/Black Hawk Down (2001).mkv",
+  "title": "Black Hawk Down",
+  "year": 2001,
+  "original_name": "Black Hawk Down 2001 Extended 1080p BluRay DTS x264-MoS",
+  "choice": 1,
+  "language": "en",
+  "replace_existing": true
+}
+```
+
+Use this only after Sam approves trying a fallback candidate. `choice: 1` means best fallback, `2` means next, and so on.
+
+### Clear all current subtitle sidecars for a movie
+```
+POST $MEDIA_API_URL/subtitles/clear
+{
+  "media_path": "/mnt/cloud/gdrive/Media/Movies/Hollywood/Black Hawk Down (2001).mkv"
+}
+```
+
+Use this when Sam wants to remove bad subtitles without downloading a replacement yet.
+
+### Save a subtitle offset note
+```
+POST $MEDIA_API_URL/subtitles/offset
+{
+  "media_path": "/mnt/cloud/gdrive/Media/Movies/Hollywood/Black Hawk Down (2001).mkv",
+  "offset_seconds": -5.8,
+  "subtitle_file": "Black Hawk Down (2001).en.srt",
+  "note": "Set manually in Jellyfin"
+}
+```
+
+This writes a sidecar note file next to the movie so Sam and OpenClaw can remember the preferred offset.
+
+### Read a saved subtitle offset note
+```
+GET $MEDIA_API_URL/subtitles/offset?media_path=/mnt/cloud/gdrive/Media/Movies/Hollywood/Black%20Hawk%20Down%20(2001).mkv
+```
+
+Use this to check whether an offset was already saved for the movie.
+
 ### Health check
 ```
 GET $MEDIA_API_URL/health
@@ -98,6 +177,16 @@ Which one? Hollywood, Hindi, TV-Hollywood, or TV-Indian?
 
 4. **WAIT** for Sam's pick and category before calling `/download`
 5. After success: `✅ Added to queue → /downloads/complete/Movies/Hollywood`
+6. If Sam asks for subtitles:
+   - Use the exact original seeded filename first. The movie completion flow returns this as `original_release_name`.
+   - Call `POST /subtitles/search` with `original_name` set to that exact release name.
+   - If `exact_match_found = true`, you may proceed to `POST /subtitles/download`.
+   - If `exact_match_found = false`, do not auto-pick a subtitle. Tell Sam: `Exact subtitle match not found for the original release name.`
+   - Then offer manual fallback: call `POST /subtitles/try-fallback` with `choice = 1`, `2`, or `3` only if Sam approves, or ask Sam to share a subtitle file for manual copy.
+   - `POST /subtitles/download` and `POST /subtitles/try-fallback` already remove old subtitle sidecars when `replace_existing = true`.
+   - If Sam wants to remove bad subtitles first and wait, call `POST /subtitles/clear`.
+   - If Sam confirms a subtitle works with a manual Jellyfin offset, save it with `POST /subtitles/offset`.
+   - Before suggesting a subtitle for a movie, you may check `GET /subtitles/offset` and remind Sam of the stored offset.
 
 ### When no TMDB metadata is returned
 
@@ -155,6 +244,17 @@ When unsure, ask one short question: "Hollywood, Hindi, TV-Hollywood, or TV-Indi
 ## Cover art in Telegram
 
 If `metadata.poster_url` is present, include it as a plain URL in your message — Telegram shows a link preview with the image. Do NOT describe the image; just include the URL.
+
+---
+
+## Subtitle Policy
+
+- Auto-download subtitles only when the subtitle release exactly matches the original seeded filename.
+- If no exact match exists, ask before trying any fallback subtitle.
+- When trying a fallback subtitle, replace the old subtitle file so there is only one active sidecar subtitle next to the movie.
+- Before saving a new subtitle, remove existing sidecar subtitle files for that movie (`.srt`, `.ass`, `.ssa`, `.sub`).
+- Save any confirmed manual subtitle offset in the sidecar note file so Sam does not have to rediscover it later.
+- If fallback attempts fail, stop and let Sam decide whether to continue without subtitles or upload one manually.
 
 ---
 
