@@ -162,7 +162,7 @@ def _parse_responses(responses: list) -> list[dict]:
                     "quality_label": label,
                 }
             entry = folders[key]
-            entry["files"].append(f.get("filename", ""))
+            entry["files"].append({"filename": f.get("filename", ""), "size": size})
             entry["total_size"] += size
             if tier < entry["best_tier"]:
                 entry["best_tier"] = tier
@@ -224,16 +224,20 @@ async def _slskd_search(query: str, timeout_ms: int = 8000) -> list:
 # slskd download
 # ---------------------------------------------------------------------------
 
-async def _slskd_download_files(peer_username: str, file_list: list[str]) -> None:
-    """Queue download of every file from a peer."""
+async def _slskd_download_files(peer_username: str, file_list: list[dict]) -> None:
+    """Queue all files from a peer in a single batch POST."""
     hdrs = await _slskd_headers()
+    payload = [{"filename": f["filename"], "size": f["size"]} for f in file_list]
     async with httpx.AsyncClient(timeout=30) as client:
-        for filename in file_list:
-            await client.post(
-                f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
-                headers=hdrs,
-                json={"filename": filename},
-            )
+        r = await client.post(
+            f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
+            headers=hdrs,
+            json=payload,
+        )
+    logger.info("slskd enqueue %s: HTTP %s, enqueued=%d failed=%d",
+                peer_username, r.status_code,
+                len((r.json() or {}).get("enqueued", [])),
+                len((r.json() or {}).get("failed", [])))
 
 
 async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int) -> None:
@@ -255,7 +259,8 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                     headers=hdrs,
                 )
             transfers = r.json() if r.status_code == 200 else []
-            our_files = set(info.get("files", []))
+            # files is a list of {filename, size} dicts — extract just the filenames for matching
+            our_files = {f["filename"] for f in info.get("files", [])}
             completed = failed = 0
             for group in transfers:
                 for tf in group.get("files") or []:
@@ -348,7 +353,7 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
         "status": "starting",
         "language": req.language.lower(),
         "peer_username": peer,
-        "files": set(files),
+        "files": files,  # list of {filename, size} dicts
         "folder_path": result["folder_path"],
         "artist": "",
         "album": "",
