@@ -52,6 +52,27 @@ class Settings(BaseSettings):
     SUBDL_API_KEY: str = ""
     SUBDL_LANGUAGES: str = "EN"
 
+    # slskd (Soulseek) — P2P music downloader
+    # Use 172.17.0.1 (Docker bridge host IP) to reach slskd running on the VPS host.
+    # SLSKD_API_KEY: generate with `openssl rand -base64 48`, mirror in slskd's YAML config.
+    SLSKD_URL: str = "http://172.17.0.1:5031"
+    SLSKD_API_KEY: str = ""
+
+    # Music enrichment
+    # ACOUSTID_API_KEY: register your app at https://acoustid.org/login
+    # FANART_TV_API_KEY: register at https://fanart.tv (free personal key)
+    # THEAUDIODB_API_KEY: free tier key is "2" — no registration needed.
+    #   Change to a paid key (e.g. "523532") if rate limits become an issue.
+    ACOUSTID_API_KEY: str = ""
+    FANART_TV_API_KEY: str = ""
+    THEAUDIODB_API_KEY: str = "2"
+
+    # Navidrome — music streaming server (already running on VPS port 4533)
+    # Use 172.17.0.1 so the sam-media-api container can reach Navidrome on the host.
+    NAVIDROME_URL: str = "http://172.17.0.1:4533"
+    NAVIDROME_USERNAME: str = ""
+    NAVIDROME_PASSWORD: str = ""
+
     class Config:
         env_file = ".env"
 
