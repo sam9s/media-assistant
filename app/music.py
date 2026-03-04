@@ -258,12 +258,12 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                     f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
                     headers=hdrs,
                 )
-            transfers = r.json() if r.status_code == 200 else []
+            data = r.json() if r.status_code == 200 else {}
             # files is a list of {filename, size} dicts — extract just the filenames for matching
             our_files = {f["filename"] for f in info.get("files", [])}
             completed = failed = 0
-            for group in transfers:
-                for tf in group.get("files") or []:
+            for directory in (data.get("directories") or []):
+                for tf in directory.get("files") or []:
                     if tf.get("filename") in our_files:
                         st = (tf.get("state") or "").lower()
                         if "completed" in st:
@@ -278,11 +278,12 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
 
     _downloads[download_id]["status"] = "enriching"
 
-    # Derive local folder path: slskd saves to {downloads_dir}/{peer}/{album_subfolder}/
+    # Derive local folder path: slskd saves to {downloads_dir}/{album_folder_name}/
+    # (slskd uses only the last path component as the folder name, no peer subfolder)
     folder_path = info.get("folder_path", "")
     album_folder_name = folder_path.replace("\\", "/").rsplit("/", 1)[-1]
     download_dir = "/mnt/cloud/gdrive/Media/Music/Downloads"
-    local_folder = f"{download_dir}/{peer_username}/{album_folder_name}"
+    local_folder = f"{download_dir}/{album_folder_name}"
 
     await asyncio.sleep(3)  # let filesystem flush
 
