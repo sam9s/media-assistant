@@ -54,9 +54,10 @@ class Settings(BaseSettings):
 
     # slskd (Soulseek) — P2P music downloader
     # Use 172.17.0.1 (Docker bridge host IP) to reach slskd running on the VPS host.
-    # SLSKD_API_KEY: generate with `openssl rand -base64 48`, mirror in slskd's YAML config.
-    SLSKD_URL: str = "http://172.17.0.1:5031"
-    SLSKD_API_KEY: str = ""
+    # SLSKD_USERNAME / SLSKD_PASSWORD: slskd web UI credentials (default: slskd / slskd).
+    SLSKD_URL: str = "http://172.17.0.1:5030"
+    SLSKD_USERNAME: str = "slskd"
+    SLSKD_PASSWORD: str = "slskd"
 
     # Music enrichment
     # ACOUSTID_API_KEY: register your app at https://acoustid.org/login
