@@ -222,8 +222,7 @@ async def _slskd_search(query: str, timeout_ms: int = 15000) -> list:
                 "id": search_id,
                 "searchText": query,
                 "fileLimit": 200,
-                "filterResponses": True,
-                "minimumPeerUploadSpeed": 0,
+                "filterResponses": False,
                 "timeout": timeout_ms,
             },
         )
