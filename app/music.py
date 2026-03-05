@@ -372,8 +372,9 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
 
     await asyncio.sleep(3)  # let filesystem flush
 
-    if not os.path.isdir(local_folder):
-        logger.error("Album enrichment: folder missing after download: %s", local_folder)
+    flac_files = [f for f in os.listdir(local_folder) if f.endswith(".flac")] if os.path.isdir(local_folder) else []
+    if not flac_files or all(os.path.getsize(os.path.join(local_folder, f)) < 65536 for f in flac_files):
+        logger.error("Album enrichment: folder missing or empty after download: %s", local_folder)
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = (
             f"Peer {peer_username} signalled success but no files were written."
@@ -469,8 +470,8 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
 
     await asyncio.sleep(3)  # let filesystem flush
 
-    if not os.path.isfile(local_path):
-        logger.error("Track enrichment: file missing after download: %s", local_path)
+    if not os.path.isfile(local_path) or os.path.getsize(local_path) < 65536:
+        logger.error("Track enrichment: file missing or empty after download: %s", local_path)
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = (
             f"Peer {peer_username} signalled success but no file was written."
