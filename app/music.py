@@ -14,6 +14,7 @@ Auth flow:
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Optional
@@ -273,42 +274,18 @@ async def _slskd_cancel_download(peer: str, transfer_id: str) -> None:
         logger.warning("Failed to cancel slskd transfer %s: %s", transfer_id, e)
 
 
-async def _slskd_peer_file_sizes(peer_username: str, folder_path: str) -> dict:
-    """Query the peer's directory via slskd to get actual file sizes.
-    Returns {full_filename: size_in_bytes} or {} on any failure."""
-    try:
-        hdrs = await _slskd_headers()
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(
-                f"{settings.SLSKD_URL}/api/v0/users/{peer_username}/directory",
-                headers=hdrs,
-                params={"directory": folder_path},
-            )
-        if r.status_code != 200:
-            logger.warning("Peer dir fetch %s/%s → HTTP %s", peer_username, folder_path, r.status_code)
-            return {}
-        files = (r.json() or {}).get("files") or []
-        sizes = {f["filename"]: int(f.get("size") or 0) for f in files if f.get("filename")}
-        logger.info("Peer dir fetch %s: %d files", peer_username, len(sizes))
-        return sizes
-    except Exception as e:
-        logger.warning("Peer dir fetch failed %s/%s: %s", peer_username, folder_path, e)
-        return {}
+_SIZE_MISMATCH_RE = re.compile(r"remote size of (\d+)")
 
 
 async def _slskd_download_files(peer_username: str, file_list: list[dict]) -> None:
     """Queue all files from a peer in a single batch POST.
-    Fetches actual peer-side file sizes first to avoid TransferSizeMismatchException."""
-    # Fetch real sizes from the peer's directory listing
-    folder_path = _remote_folder(file_list[0]["filename"]) if file_list else ""
-    peer_sizes = await _slskd_peer_file_sizes(peer_username, folder_path)
 
+    Handles TransferSizeMismatchException transparently: after enqueueing,
+    waits 2 s, checks for immediate size-mismatch failures, then deletes
+    and re-enqueues with the peer's actual announced size.
+    """
     hdrs = await _slskd_headers()
-    payload = []
-    for f in file_list:
-        fname = f["filename"]
-        size = peer_sizes.get(fname) or f.get("size") or 0
-        payload.append({"filename": fname, "size": size})
+    payload = [{"filename": f["filename"], "size": f.get("size") or 0} for f in file_list]
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
@@ -329,6 +306,68 @@ async def _slskd_download_files(peer_username: str, file_list: list[dict]) -> No
         enqueued = n_failed = 0
     logger.info("slskd enqueue %s: HTTP %s, enqueued=%d failed=%d",
                 peer_username, r.status_code, enqueued, n_failed)
+
+    # Wait briefly for any immediate size-mismatch failures to appear
+    await asyncio.sleep(2)
+    await _slskd_fix_size_mismatches(peer_username, file_list)
+
+
+async def _slskd_fix_size_mismatches(peer_username: str, file_list: list[dict]) -> None:
+    """Check for failed transfers due to size mismatch; delete and re-enqueue with corrected sizes."""
+    filenames = {f["filename"] for f in file_list}
+    hdrs = await _slskd_headers()
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
+                headers=hdrs,
+            )
+        if r.status_code != 200:
+            return
+        data = r.json() or {}
+    except Exception as e:
+        logger.warning("Size-mismatch check failed: %s", e)
+        return
+
+    retry_payload = []
+    for directory in (data.get("directories") or []):
+        for tf in (directory.get("files") or []):
+            if tf.get("filename") not in filenames:
+                continue
+            exception = tf.get("exception") or ""
+            m = _SIZE_MISMATCH_RE.search(exception)
+            if not m:
+                continue
+            actual_size = int(m.group(1))
+            transfer_id = tf.get("id")
+            logger.info("Size mismatch %s: expected %d → actual %d — retrying",
+                        tf["filename"].rsplit("\\", 1)[-1], tf.get("size", 0), actual_size)
+            if transfer_id:
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        await client.delete(
+                            f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}/{transfer_id}",
+                            headers=hdrs,
+                            params={"remove": "true"},
+                        )
+                except Exception as e:
+                    logger.warning("Delete failed transfer %s: %s", transfer_id, e)
+            retry_payload.append({"filename": tf["filename"], "size": actual_size})
+
+    if retry_payload:
+        try:
+            hdrs = await _slskd_headers()
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(
+                    f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
+                    headers=hdrs,
+                    json=retry_payload,
+                )
+            logger.info("Size-corrected re-enqueue %s: HTTP %s, files=%d",
+                        peer_username, r.status_code, len(retry_payload))
+        except Exception as e:
+            logger.error("Size-corrected re-enqueue failed: %s", e)
 
 
 async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int) -> None:
