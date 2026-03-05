@@ -276,7 +276,9 @@ async def _slskd_cancel_download(peer: str, transfer_id: str) -> None:
 async def _slskd_download_files(peer_username: str, file_list: list[dict]) -> None:
     """Queue all files from a peer in a single batch POST."""
     hdrs = await _slskd_headers()
-    payload = [{"filename": f["filename"], "size": f["size"]} for f in file_list]
+    # Omit "size" so slskd skips the strict TransferSizeMismatch check
+    # (tiny size discrepancies between search index and actual file cause aborts)
+    payload = [{"filename": f["filename"]} for f in file_list]
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
