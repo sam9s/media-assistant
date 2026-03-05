@@ -13,6 +13,7 @@ Auth flow:
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from typing import Optional
@@ -371,6 +372,14 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
 
     await asyncio.sleep(3)  # let filesystem flush
 
+    if not os.path.isdir(local_folder):
+        logger.error("Album enrichment: folder missing after download: %s", local_folder)
+        _downloads[download_id]["status"]  = "stuck"
+        _downloads[download_id]["message"] = (
+            f"Peer {peer_username} signalled success but no files were written."
+        )
+        return
+
     await enrich_and_deliver(
         download_folder=local_folder,
         language=info["language"],
@@ -459,6 +468,14 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     local_path = f"{download_dir}/{folder_name}/{file_basename}"
 
     await asyncio.sleep(3)  # let filesystem flush
+
+    if not os.path.isfile(local_path):
+        logger.error("Track enrichment: file missing after download: %s", local_path)
+        _downloads[download_id]["status"]  = "stuck"
+        _downloads[download_id]["message"] = (
+            f"Peer {peer_username} signalled success but no file was written."
+        )
+        return
 
     await enrich_single_track(
         flac_path=local_path,
