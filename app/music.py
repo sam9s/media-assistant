@@ -323,11 +323,12 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                         tid = tf.get("id", "")
                         if tid:
                             _transfer_ids[tf["filename"]] = tid
-                        _cur_total_bytes += int(tf.get("bytesTransferred") or 0)
+                        tf_bytes = int(tf.get("bytesTransferred") or 0)
+                        _cur_total_bytes += tf_bytes
                         st = (tf.get("state") or "").lower()
-                        if "succeeded" in st:
+                        if "succeeded" in st and tf_bytes >= 65536:
                             completed += 1
-                        elif "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
+                        elif "succeeded" in st or "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
                             failed += 1
             logger.info("Download %s: %d/%d done, %d failed", download_id, completed, file_count, failed)
             if completed + failed >= file_count:
@@ -424,9 +425,9 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                         _transfer_id = tf.get("id") or _transfer_id
                         _cur_bytes = int(tf.get("bytesTransferred") or 0)
                         st = (tf.get("state") or "").lower()
-                        if "succeeded" in st:
+                        if "succeeded" in st and _cur_bytes >= 65536:
                             completed += 1
-                        elif "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
+                        elif "succeeded" in st or "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
                             failed += 1
             logger.info("Track download %s: completed=%d failed=%d bytes=%d", download_id, completed, failed, _cur_bytes)
             if completed + failed >= 1:
