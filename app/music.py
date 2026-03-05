@@ -209,7 +209,7 @@ def _parse_responses_tracks(responses: list) -> list[dict]:
 # slskd search
 # ---------------------------------------------------------------------------
 
-async def _slskd_search(query: str, timeout_ms: int = 8000) -> list:
+async def _slskd_search(query: str, timeout_ms: int = 15000) -> list:
     """Run a slskd search and return ranked result list."""
     search_id = str(uuid.uuid4())
     hdrs = await _slskd_headers()
@@ -235,7 +235,7 @@ async def _slskd_search(query: str, timeout_ms: int = 8000) -> list:
                 f"{settings.SLSKD_URL}/api/v0/searches/{search_id}",
                 headers=hdrs,
             )
-            if r.status_code == 200 and r.json().get("state") in ("Completed", "Stopped"):
+            if r.status_code == 200 and r.json().get("state", "").startswith("Completed"):
                 break
 
         # Fetch responses
