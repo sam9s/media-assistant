@@ -336,7 +336,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
             if _cur_total_bytes > _last_bytes:
                 _last_bytes = _cur_total_bytes
                 _last_progress = _now
-            if _transfer_ids and not (completed or failed):
+            if not (completed or failed):
                 no_start = (_last_bytes == 0) and ((_now - _start) >= _STUCK_NO_START_SECS)
                 stalled  = (_last_bytes > 0)  and ((_now - _last_progress) >= _STUCK_STALL_SECS)
                 if no_start or stalled:
@@ -426,13 +426,14 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
             if _cur_bytes > _last_bytes:
                 _last_bytes = _cur_bytes
                 _last_progress = _now
-            if _transfer_id is not None and not (completed or failed):
+            if not (completed or failed):
                 no_start = (_last_bytes == 0) and ((_now - _start) >= _STUCK_NO_START_SECS)
                 stalled  = (_last_bytes > 0)  and ((_now - _last_progress) >= _STUCK_STALL_SECS)
                 if no_start or stalled:
                     reason = "unresponsive for 10 minutes" if no_start else "stalled for 5 minutes"
                     logger.warning("Track %s: peer %s %s — cancelling", download_id, peer_username, reason)
-                    await _slskd_cancel_download(peer_username, _transfer_id)
+                    if _transfer_id is not None:
+                        await _slskd_cancel_download(peer_username, _transfer_id)
                     _downloads[download_id]["status"]  = "stuck"
                     _downloads[download_id]["message"] = (
                         f"Peer {peer_username} was {reason}. Download cancelled."
