@@ -302,6 +302,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     _last_bytes: int = 0
     _last_progress = _start
     _transfer_ids: dict[str, str] = {}   # filename → slskd transfer id
+    completed = failed = 0               # track across loop (safe post-loop access)
 
     for _ in range(360):  # max 60 min
         await asyncio.sleep(10)
@@ -323,9 +324,9 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                             _transfer_ids[tf["filename"]] = tid
                         _cur_total_bytes += int(tf.get("bytesTransferred") or 0)
                         st = (tf.get("state") or "").lower()
-                        if "completed" in st:
+                        if "succeeded" in st:
                             completed += 1
-                        elif "errored" in st or "cancelled" in st:
+                        elif "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
                             failed += 1
             logger.info("Download %s: %d/%d done, %d failed", download_id, completed, file_count, failed)
             if completed + failed >= file_count:
@@ -353,6 +354,12 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
 
     if _downloads[download_id].get("status") != "downloading":
         return  # was marked stuck inside the loop
+    if completed == 0:
+        _downloads[download_id]["status"]  = "stuck"
+        _downloads[download_id]["message"] = (
+            f"Peer {peer_username} rejected or failed the transfer."
+        )
+        return
     _downloads[download_id]["status"] = "enriching"
 
     # Derive local folder path: slskd saves to {downloads_dir}/{album_folder_name}/
@@ -387,6 +394,7 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     _last_progress = _start
     _transfer_id: Optional[str] = None
     _cur_bytes: int = 0
+    completed = failed = 0               # track across loop (safe post-loop access)
 
     for _ in range(360):  # max 60 min
         await asyncio.sleep(10)
@@ -406,9 +414,9 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                         _transfer_id = tf.get("id") or _transfer_id
                         _cur_bytes = int(tf.get("bytesTransferred") or 0)
                         st = (tf.get("state") or "").lower()
-                        if "completed" in st:
+                        if "succeeded" in st:
                             completed += 1
-                        elif "errored" in st or "cancelled" in st:
+                        elif "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
                             failed += 1
             logger.info("Track download %s: completed=%d failed=%d bytes=%d", download_id, completed, failed, _cur_bytes)
             if completed + failed >= 1:
@@ -435,6 +443,12 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
 
     if _downloads[download_id].get("status") != "downloading":
         return  # was marked stuck inside the loop
+    if completed == 0:
+        _downloads[download_id]["status"]  = "stuck"
+        _downloads[download_id]["message"] = (
+            f"Peer {peer_username} rejected or failed the transfer."
+        )
+        return
     _downloads[download_id]["status"] = "enriching"
 
     # slskd saves single file to {downloads_dir}/{last_folder_component}/{basename}
