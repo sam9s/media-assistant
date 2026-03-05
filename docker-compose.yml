@@ -53,7 +53,7 @@ services:
     volumes:
       - /root/apps/slskd/slskd.yml:/app/slskd.yml:ro
       - slskd_data:/app/data
-      - /mnt/cloud/gdrive/Media/Music/Downloads:/mnt/cloud/gdrive/Media/Music/Downloads
+      - /mnt/cloud/gdrive/Media/Music/Downloads:/app/downloads  # slskd writes here by default
     networks:
       - internal
 
