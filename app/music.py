@@ -66,7 +66,8 @@ async def _slskd_token() -> str:
         raise HTTPException(status_code=503, detail=f"slskd login failed: {r.status_code}")
     data = r.json()
     _jwt["token"] = data["token"]
-    _jwt["expires"] = float(data["expires"])
+    # Cap at 5 min to avoid stale tokens when slskd is restarted
+    _jwt["expires"] = min(float(data["expires"]), time.time() + 300)
     return _jwt["token"]
 
 
