@@ -273,22 +273,62 @@ async def _slskd_cancel_download(peer: str, transfer_id: str) -> None:
         logger.warning("Failed to cancel slskd transfer %s: %s", transfer_id, e)
 
 
+async def _slskd_peer_file_sizes(peer_username: str, folder_path: str) -> dict:
+    """Query the peer's directory via slskd to get actual file sizes.
+    Returns {full_filename: size_in_bytes} or {} on any failure."""
+    try:
+        hdrs = await _slskd_headers()
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"{settings.SLSKD_URL}/api/v0/users/{peer_username}/directory",
+                headers=hdrs,
+                params={"directory": folder_path},
+            )
+        if r.status_code != 200:
+            logger.warning("Peer dir fetch %s/%s → HTTP %s", peer_username, folder_path, r.status_code)
+            return {}
+        files = (r.json() or {}).get("files") or []
+        sizes = {f["filename"]: int(f.get("size") or 0) for f in files if f.get("filename")}
+        logger.info("Peer dir fetch %s: %d files", peer_username, len(sizes))
+        return sizes
+    except Exception as e:
+        logger.warning("Peer dir fetch failed %s/%s: %s", peer_username, folder_path, e)
+        return {}
+
+
 async def _slskd_download_files(peer_username: str, file_list: list[dict]) -> None:
-    """Queue all files from a peer in a single batch POST."""
+    """Queue all files from a peer in a single batch POST.
+    Fetches actual peer-side file sizes first to avoid TransferSizeMismatchException."""
+    # Fetch real sizes from the peer's directory listing
+    folder_path = _remote_folder(file_list[0]["filename"]) if file_list else ""
+    peer_sizes = await _slskd_peer_file_sizes(peer_username, folder_path)
+
     hdrs = await _slskd_headers()
-    # Pass size=None (JSON null) so slskd uses peer-announced size instead of
-    # our search-index size, bypassing TransferSizeMismatch aborts.
-    payload = [{"filename": f["filename"], "size": None} for f in file_list]
+    payload = []
+    for f in file_list:
+        fname = f["filename"]
+        size = peer_sizes.get(fname) or f.get("size") or 0
+        payload.append({"filename": fname, "size": size})
+
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"{settings.SLSKD_URL}/api/v0/transfers/downloads/{peer_username}",
             headers=hdrs,
             json=payload,
         )
+
+    try:
+        resp_data = r.json()
+        if isinstance(resp_data, dict):
+            enqueued = len(resp_data.get("enqueued", []))
+            n_failed = len(resp_data.get("failed", []))
+        else:
+            enqueued = n_failed = 0
+            logger.warning("slskd enqueue unexpected response: %s", resp_data)
+    except Exception:
+        enqueued = n_failed = 0
     logger.info("slskd enqueue %s: HTTP %s, enqueued=%d failed=%d",
-                peer_username, r.status_code,
-                len((r.json() or {}).get("enqueued", [])),
-                len((r.json() or {}).get("failed", [])))
+                peer_username, r.status_code, enqueued, n_failed)
 
 
 async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int) -> None:
