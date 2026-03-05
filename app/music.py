@@ -396,15 +396,13 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
         )
         return
 
-    await enrich_and_deliver(
+    success = await enrich_and_deliver(
         download_folder=local_folder,
         language=info["language"],
         artist_hint=info.get("artist", ""),
         album_hint=info.get("album", ""),
     )
-    # If enrichment failed the folder stays (not moved to destination)
-    if os.path.isdir(local_folder):
-        logger.error("Album enrichment: folder not moved — enrichment likely failed: %s", local_folder)
+    if not success:
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = "Enrichment failed — album could not be identified."
         return
@@ -505,15 +503,13 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
         )
         return
 
-    await enrich_single_track(
+    success = await enrich_single_track(
         flac_path=local_path,
         language=info["language"],
         title_hint=info.get("title", ""),
         artist_hint=info.get("artist", ""),
     )
-    # If enrichment failed the file stays at local_path (not moved to destination)
-    if os.path.isfile(local_path):
-        logger.error("Track enrichment: file not moved — enrichment likely failed: %s", local_path)
+    if not success:
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = "Enrichment failed — track could not be identified."
         return

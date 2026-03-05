@@ -199,7 +199,7 @@ async def enrich_and_deliver(
     language: str,
     artist_hint: str = "",
     album_hint: str = "",
-) -> None:
+) -> bool:
     """
     Full enrichment pipeline. Runs as a background task.
 
@@ -215,12 +215,12 @@ async def enrich_and_deliver(
 
     if not folder.exists():
         logger.error("Enrichment: download folder not found: %s", download_folder)
-        return
+        return False
 
     flac_files = sorted(folder.rglob("*.flac"))
     if not flac_files:
         logger.warning("Enrichment: no FLAC files found in %s", download_folder)
-        return
+        return False
 
     # --- Step 1+2: Fingerprint first FLAC → metadata ---
     meta = None
@@ -283,11 +283,12 @@ async def enrich_and_deliver(
             logger.info("Enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Enrichment move failed %s → %s: %s", folder, dest, e)
-        return
+        return False
 
     # --- Step 9: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan: %s", scan_result)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +341,7 @@ async def enrich_single_track(
     language: str,
     title_hint: str = "",
     artist_hint: str = "",
-) -> None:
+) -> bool:
     """
     Enrich and deliver a single FLAC track to the Misc/ folder.
 
@@ -354,7 +355,7 @@ async def enrich_single_track(
     file = Path(flac_path)
     if not file.exists():
         logger.error("Track enrichment: file not found: %s", flac_path)
-        return
+        return False
 
     dest_root = LANGUAGE_DIRS.get(language.lower(), LANGUAGE_DIRS["english"])
 
@@ -408,11 +409,12 @@ async def enrich_single_track(
             logger.info("Track enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Track move failed %s → %s: %s", file, dest, e)
-        return
+        return False
 
     # --- Step 8: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan after track delivery: %s", scan_result)
+    return True
 
 
 def _detect_hires(flac_files: list) -> bool:
