@@ -35,6 +35,7 @@ Response:
   - `quality` — `"Hi-Res FLAC (24bit 96kHz)"` | `"FLAC"` (lossy formats are filtered out)
 
 Results are pre-ranked: Hi-Res FLAC first, then standard FLAC by total size (larger = more tracks).
+Up to 25 results are returned.
 
 ### Download
 ```
@@ -92,20 +93,28 @@ Stop here unless Sam says yes.
 ❌ No FLAC results found for "XYZ" on Soulseek. Try a different spelling or album title?
 ```
 
-4. Present results:
+4. Present results — show **top 10** by default. If there are more, add a "show more" line:
 ```
-🎵 Found 5 FLAC results for "Queen – A Night at the Opera":
+🎵 Found 18 FLAC results for "Queen – A Night at the Opera":
 
 1️⃣ A Night at the Opera [FLAC] — vsaelices | 12 tracks | 285 MB | FLAC
 2️⃣ Queen - A Night At The Opera (1975) FLAC — musiclover99 | 11 tracks | 241 MB | FLAC
 3️⃣ ANATO [Hi-Res FLAC] — qseeds | 12 tracks | 892 MB | Hi-Res FLAC (24bit 96kHz)
 4️⃣ Night at the Opera — peerxyz | 12 tracks | 198 MB | FLAC
 5️⃣ Queen Complete — bigcollection | 12 tracks | 210 MB | FLAC
+6️⃣ ...
+7️⃣ ...
+8️⃣ ...
+9️⃣ ...
+🔟 ...
+
+🔽 8 more results available — say "show more" to see them.
 
 English, Hindi, or Punjabi? Which result?
 ```
 
-Ask both questions in one message. No need for two separate prompts.
+If Sam says "show more", list the remaining results (11 onwards) in the same format.
+Ask language + pick in one message. No need for two separate prompts.
 
 5. **WAIT** for Sam's pick + language.
 
@@ -238,15 +247,22 @@ Response includes `"destination": "Misc/"` — the track goes to `Music/English/
 ### Workflow for single tracks
 
 1. Call `POST /music/search` with `mode: "track"`
-2. Present results:
+2. Present results — show **top 10** by default, offer "show more" if there are more:
 ```
-🎵 Found 5 FLAC tracks for "Bohemian Rhapsody":
+🎵 Found 14 FLAC tracks for "Bohemian Rhapsody":
 
 1️⃣ Bohemian Rhapsody.flac — 45 MB | FLAC
 2️⃣ 05 - Bohemian Rhapsody.flac — 43 MB | FLAC
 3️⃣ Bohemian Rhapsody (Remaster).flac — 48 MB | Hi-Res FLAC (24bit 96kHz)
 4️⃣ Bohemian_Rhapsody.flac — 44 MB | FLAC
 5️⃣ Bohemian Rhapsody.flac — 41 MB | FLAC
+6️⃣ ...
+7️⃣ ...
+8️⃣ ...
+9️⃣ ...
+🔟 ...
+
+🔽 4 more results available — say "show more" to see them.
 
 English Misc, Hindi Misc, or Punjabi? Which result?
 ```
