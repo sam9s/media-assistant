@@ -201,18 +201,27 @@ async def _yt_download_task(download_id: str, url: str, title: str, language: st
 
     import os
     cookies = settings.YOUTUBE_COOKIES_FILE
+    if not cookies or not os.path.isfile(cookies):
+        state["status"] = "failed"
+        state["error"] = (
+            "YouTube cookies not configured. "
+            "Export youtube_cookies.txt from Chrome (YouTube Premium) and upload to the VPS. "
+            "See setup instructions."
+        )
+        logger.error("yt-dlp blocked: cookies file missing at %s", cookies)
+        return
+
     cmd = [
         "yt-dlp",
+        "--cookies", cookies,
         "--format", "bestaudio[format_id=774]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio",
         "--extract-audio", "--audio-format", "opus", "--audio-quality", "0",
         "--embed-thumbnail", "--embed-metadata",
         "--parse-metadata", "%(uploader)s:%(meta_artist)s",
         "--output", f"{dest}/%(uploader)s - %(title)s.%(ext)s",
         "--no-playlist",
+        url,
     ]
-    if cookies and os.path.isfile(cookies):
-        cmd += ["--cookies", cookies]
-    cmd.append(url)
 
     logger.info("yt-dlp download starting: %s → %s", title, dest)
     try:
