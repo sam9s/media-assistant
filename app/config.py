@@ -76,9 +76,12 @@ class Settings(BaseSettings):
 
     # YouTube Opus Maven — comma-separated public playlist URLs to search first.
     # Leave blank to skip playlist search and go straight to YouTube search.
-    # OAuth token is cached at /root/.cache/yt-dlp/ (Docker volume); run the
-    # one-time setup command after deploy to authenticate with YouTube Premium.
     YOUTUBE_PLAYLIST_URLS: str = ""
+    # Path to Netscape-format cookies.txt inside the container.
+    # Export from Chrome (while logged into YouTube Premium) using the
+    # "Get cookies.txt LOCALLY" extension, upload to VPS, mount via docker-compose.
+    # Without this file the pipeline still works but gets 160kbps instead of 256kbps.
+    YOUTUBE_COOKIES_FILE: str = "/app/youtube_cookies.txt"
 
     class Config:
         env_file = ".env"

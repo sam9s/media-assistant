@@ -56,11 +56,12 @@ _DEST: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 def _ydl_opts_base() -> dict:
-    """Base yt-dlp Python API options — OAuth auth, quiet."""
+    """Base yt-dlp Python API options. Uses cookies file if present (for YT Premium quality)."""
+    import os
     opts: dict = {"quiet": True, "no_warnings": True}
-    # Use OAuth if token is cached; yt-dlp auto-refreshes transparently
-    opts["username"] = "oauth2"
-    opts["password"] = ""
+    cookies = settings.YOUTUBE_COOKIES_FILE
+    if cookies and os.path.isfile(cookies):
+        opts["cookiefile"] = cookies
     return opts
 
 
@@ -198,17 +199,20 @@ async def _yt_download_task(download_id: str, url: str, title: str, language: st
     state = _yt_downloads[download_id]
     state["status"] = "downloading"
 
+    import os
+    cookies = settings.YOUTUBE_COOKIES_FILE
     cmd = [
         "yt-dlp",
-        "--username", "oauth2", "--password", "",
         "--format", "bestaudio[format_id=774]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio",
         "--extract-audio", "--audio-format", "opus", "--audio-quality", "0",
         "--embed-thumbnail", "--embed-metadata",
         "--parse-metadata", "%(uploader)s:%(meta_artist)s",
         "--output", f"{dest}/%(uploader)s - %(title)s.%(ext)s",
         "--no-playlist",
-        url,
     ]
+    if cookies and os.path.isfile(cookies):
+        cmd += ["--cookies", cookies]
+    cmd.append(url)
 
     logger.info("yt-dlp download starting: %s → %s", title, dest)
     try:
