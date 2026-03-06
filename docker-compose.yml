@@ -10,6 +10,7 @@ services:
     volumes:
       - /srv/downloads:/downloads                           # shared with qBittorrent — rename files here
       - /mnt/cloud/gdrive/Media:/mnt/cloud/gdrive/Media    # rclone FUSE mount = gdrive = Jellyfin library
+      - ./yt-dlp-cache:/root/.cache/yt-dlp                 # persist OAuth token across rebuilds
     dns:
       - 8.8.8.8
       - 8.8.4.4

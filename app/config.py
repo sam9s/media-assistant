@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     NAVIDROME_USERNAME: str = ""
     NAVIDROME_PASSWORD: str = ""
 
+    # YouTube Opus Maven — comma-separated public playlist URLs to search first.
+    # Leave blank to skip playlist search and go straight to YouTube search.
+    # OAuth token is cached at /root/.cache/yt-dlp/ (Docker volume); run the
+    # one-time setup command after deploy to authenticate with YouTube Premium.
+    YOUTUBE_PLAYLIST_URLS: str = ""
+
     class Config:
         env_file = ".env"
 
