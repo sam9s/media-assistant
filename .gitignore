@@ -1,5 +1,6 @@
 # Environment — NEVER commit this
 .env
+youtube_cookies.txt
 
 # Python
 __pycache__/

@@ -51,16 +51,35 @@ _DEST: dict[str, str] = {
 }
 
 
+def _validate_cookies_file(path: str) -> tuple[bool, str]:
+    import os
+
+    if not path:
+        return False, "path missing"
+    if not os.path.isfile(path):
+        return False, "file missing"
+    if os.path.getsize(path) <= 0:
+        return False, "file empty"
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            first = fh.readline().strip()
+    except Exception as e:
+        return False, f"read error: {e}"
+    if "Netscape HTTP Cookie File" not in first:
+        return False, "invalid format header"
+    return True, "ok"
+
+
 # ---------------------------------------------------------------------------
 # Playlist helpers
 # ---------------------------------------------------------------------------
 
 def _ydl_opts_base() -> dict:
     """Base yt-dlp Python API options. Uses cookies file if present (for YT Premium quality)."""
-    import os
     opts: dict = {"quiet": True, "no_warnings": True}
     cookies = settings.YOUTUBE_COOKIES_FILE
-    if cookies and os.path.isfile(cookies):
+    valid, _reason = _validate_cookies_file(cookies)
+    if valid:
         opts["cookiefile"] = cookies
     return opts
 
@@ -199,21 +218,23 @@ async def _yt_download_task(download_id: str, url: str, title: str, language: st
     state = _yt_downloads[download_id]
     state["status"] = "downloading"
 
-    import os
     cookies = settings.YOUTUBE_COOKIES_FILE
-    if not cookies or not os.path.isfile(cookies):
+    valid, reason = _validate_cookies_file(cookies)
+    if not valid:
         state["status"] = "failed"
         state["error"] = (
             "YouTube cookies not configured. "
             "Export youtube_cookies.txt from Chrome (YouTube Premium) and upload to the VPS. "
             "See setup instructions."
         )
-        logger.error("yt-dlp blocked: cookies file missing at %s", cookies)
+        logger.error("yt-dlp blocked: cookies file invalid at %s (%s)", cookies, reason)
         return
 
     cmd = [
         "yt-dlp",
         "--cookies", cookies,
+        "--js-runtimes", "node",
+        "--force-overwrites",
         "--format", "bestaudio[format_id=774]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio",
         "--extract-audio", "--audio-format", "opus", "--audio-quality", "0",
         "--embed-thumbnail", "--embed-metadata",

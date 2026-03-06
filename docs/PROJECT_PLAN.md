@@ -14,6 +14,14 @@
   - EPUB structural validation, Kavita duplicate detection, and post-download scan all confirmed working.
 - Current Librarian state is documented in `docs/KAVITA_STATUS_AND_ANNA_PLAN.md`.
 
+**Project state note (2026-03-06):**
+- Workflow lock: local repo is code source-of-truth; VPS is runtime test environment.
+- YouTube Opus Maven endpoints are implemented and mounted (`/youtube/search`, `/youtube/download`, `/youtube/status/{download_id}`).
+- Cookies runtime path activation is complete and validated (host + container visibility, strict invalid-cookie failure path).
+- YouTube extraction fix validated: `yt-dlp[default]` + `nodejs` + `--js-runtimes node` resolves challenge path for tested URLs.
+- YouTube outputs are language-specific: `Music/{English|Hindi|Punjabi}/YouTube_Music` (not root `Music/YouTube_Music`).
+- YouTube operational detail is documented in `docs/YouTube_Opus Maven.md`.
+
 ---
 
 ## 1. WHAT IS BUILT
@@ -34,6 +42,7 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - Full Librarian/Kavita pipeline: search (SE + Gutenberg + Archive.org + Anna's Archive), EPUB download, structural validation, Kavita scan — confirmed end-to-end (2026-03-04)
 - Anna's Archive: HTML scraper + Libgen two-step resolver (ads.php → get.php); no unofficial wrappers, httpx + BeautifulSoup only
 - EPUB structural validation (ZIP → container.xml → OPF → dc:title) rejects malformed files before Kavita ingestion
+- YouTube Opus Maven router (`/youtube/*`) with playlist-first search, background download worker, and Navidrome scan hook
 
 ---
 
@@ -314,6 +323,9 @@ ANNA_ARCHIVE_COOKIE=
 | Book appears in Kavita after scan | PASS (2026-03-04) |
 | `already_in_kavita: true` for book already in library | PASS (2026-03-04) |
 | `already_in_kavita: false` for book not in library | PASS (2026-03-04) |
+| `POST /youtube/search` returns non-empty results with cookies file loaded | PASS (2026-03-06) |
+| Invalid/empty `youtube_cookies.txt` fails fast with explicit cookie error | PASS (2026-03-06) |
+| `POST /youtube/download` completes media extraction on VPS | PASS (2026-03-06) |
 
 **Test command used:**
 ```bash
@@ -377,6 +389,12 @@ docker compose up -d --force-recreate
 curl http://localhost:8765/health
 # â†’ {"status":"ok"}
 ```
+
+### Sync model (locked)
+- Code edits happen in local repo first: `D:\RAVENs\media_assistant`
+- Deploy those code changes to VPS for live runtime testing
+- Push to GitHub only after VPS validation passes
+- Runtime secrets/files remain VPS-only and untracked (`.env`, `youtube_cookies.txt`, service state)
 
 ---
 
