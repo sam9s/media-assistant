@@ -176,7 +176,7 @@ def _parse_responses(responses: list) -> list[dict]:
                 entry["best_tier"] = tier
                 entry["quality_label"] = label
 
-    return sorted(folders.values(), key=lambda x: (x["best_tier"], -x["total_size"]))[:10]
+    return sorted(folders.values(), key=lambda x: (x["best_tier"], -x["total_size"]))[:25]
 
 
 def _parse_responses_tracks(responses: list) -> list[dict]:
@@ -204,33 +204,34 @@ def _parse_responses_tracks(responses: list) -> list[dict]:
                 "best_tier": tier,
                 "quality_label": label,
             })
-    return sorted(tracks, key=lambda x: (x["best_tier"], -x["size_mb"]))[:10]
+    return sorted(tracks, key=lambda x: (x["best_tier"], -x["size_mb"]))[:25]
 
 
 # ---------------------------------------------------------------------------
 # slskd search
 # ---------------------------------------------------------------------------
 
-async def _slskd_search(query: str, timeout_ms: int = 15000) -> list:
+async def _slskd_search(query: str, timeout_ms: int = 30000) -> list:
     """Run a slskd search and return ranked result list."""
     search_id = str(uuid.uuid4())
     hdrs = await _slskd_headers()
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=45) as client:
         await client.post(
             f"{settings.SLSKD_URL}/api/v0/searches",
             headers=hdrs,
             json={
                 "id": search_id,
                 "searchText": query,
-                "fileLimit": 200,
+                "fileLimit": 10000,
+                "responseLimit": 500,
                 "filterResponses": False,
                 "timeout": timeout_ms,
             },
         )
 
-        # Poll until Completed/Stopped (max 30s)
-        for _ in range(30):
+        # Poll until Completed/Stopped (max 45s — covers 30s timeout with headroom)
+        for _ in range(45):
             await asyncio.sleep(1)
             r = await client.get(
                 f"{settings.SLSKD_URL}/api/v0/searches/{search_id}",
