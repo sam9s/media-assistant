@@ -103,7 +103,7 @@ def _mb_release_from_recording(recording_id: str) -> Optional[dict]:
     try:
         result = musicbrainzngs.get_recording_by_id(
             recording_id,
-            includes=["artists", "releases", "release-groups"],
+            includes=["artists", "releases"],
         )
         recording = result.get("recording", {})
         artist = ""

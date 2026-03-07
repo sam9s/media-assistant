@@ -97,11 +97,12 @@ Important:
 - It tries to match the track against MusicBrainz and then improve tags and album naming.
 - It tries cover art in this order:
 - `Cover Art Archive` from MusicBrainz release / release-group
-- `TMDB` poster fallback for film / soundtrack-style titles
+- `TMDB` poster fallback for film / soundtrack-style titles, but only when year validation passes
 - `TheAudioDB`
 - existing embedded YouTube thumbnail
 - If the match is weak, it keeps the yt-dlp metadata instead of forcing bad tags.
 - If no stronger art is found, the existing embedded YouTube thumbnail is preserved.
+- If a title contains a year and TMDB returns a different movie year, that TMDB art must be rejected.
 
 ## Failure Handling
 

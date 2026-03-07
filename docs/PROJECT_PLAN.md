@@ -22,7 +22,7 @@
 - YouTube outputs are language-specific: `Music/{English|Hindi|Punjabi}/YouTube_Music` (not root `Music/YouTube_Music`).
 - `/youtube/search` now resolves direct YouTube URLs deterministically as exact result `1`, while keeping the normal confirmation flow.
 - `/youtube/status` now exposes actual selected source format details (`source_format_id`, `source_abr_kbps`, `source_acodec`) plus saved path.
-- YouTube downloads now run a safe post-download enrichment pass: improve title/artist/album via MusicBrainz when match confidence is high, then resolve art with `Cover Art Archive -> TMDB -> TheAudioDB -> existing embedded thumbnail`.
+- YouTube downloads now run a safe post-download enrichment pass: improve title/artist/album via MusicBrainz when match confidence is high, then resolve art with `Cover Art Archive -> TMDB (exact-year validated when year is present) -> TheAudioDB -> existing embedded thumbnail`.
 - YouTube operational detail is documented in `docs/YouTube_Opus Maven.md`.
 
 ---

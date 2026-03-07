@@ -11,6 +11,41 @@ class TMDBClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
 
+    async def get_movie_poster(self, query: str, year: int | None = None) -> Optional[dict]:
+        """
+        Search TMDB movies only, optionally enforcing an exact release year.
+        Returns the best poster-bearing movie match or None.
+        """
+        tmdb_query = re.sub(r"\s+\d{4}$", "", query).strip() or query
+        transport = httpx.AsyncHTTPTransport(retries=3)
+        async with httpx.AsyncClient(timeout=15, transport=transport) as client:
+            params = {"query": tmdb_query, "api_key": self.api_key, "page": 1}
+            if year:
+                params["year"] = year
+            search_resp = await client.get(f"{TMDB_BASE}/search/movie", params=params)
+            if search_resp.status_code != 200:
+                return None
+
+            hits = search_resp.json().get("results", [])
+            if year is not None:
+                year_str = str(year)
+                hits = [h for h in hits if (h.get("release_date") or "").startswith(year_str)]
+            if not hits:
+                return None
+
+            best = hits[0]
+            poster_path = best.get("poster_path") or ""
+            if not poster_path:
+                return None
+
+        release_date = best.get("release_date") or ""
+        return {
+            "title": best.get("title") or "Unknown",
+            "year": int(release_date[:4]) if len(release_date) >= 4 else None,
+            "tmdb_id": best.get("id"),
+            "poster_url": f"{TMDB_IMAGE_BASE}{poster_path}",
+        }
+
     async def get_metadata(self, query: str) -> Optional[dict]:
         """
         Search TMDB for a movie or TV show and return enriched metadata:

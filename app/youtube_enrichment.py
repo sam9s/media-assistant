@@ -184,7 +184,7 @@ def _mb_release_cover_ids(recording_id: str) -> dict:
     try:
         result = musicbrainzngs.get_recording_by_id(
             recording_id,
-            includes=["releases", "release-groups"],
+            includes=["releases"],
         )
         recording = result.get("recording", {})
         releases = recording.get("release-list", []) or []
@@ -219,15 +219,14 @@ async def _cover_art_archive_cover(release_id: str = "", release_group_id: str =
 async def _tmdb_cover(raw_title: str, album: str, year: str) -> tuple[Optional[bytes], Optional[str]]:
     if not settings.TMDB_API_KEY:
         return None, None
+    year_int = int(year) if year and year.isdigit() else None
     queries = []
-    if album and year:
-        queries.append(f"{album} {year}")
     if album:
         queries.append(album)
     if raw_title and album and raw_title != album:
-        queries.append(f"{album} {raw_title}")
+        queries.append(album)
     if raw_title:
-        queries.append(raw_title)
+        queries.append(_album_from_context(raw_title) or raw_title)
 
     seen = set()
     for query in queries:
@@ -235,7 +234,9 @@ async def _tmdb_cover(raw_title: str, album: str, year: str) -> tuple[Optional[b
         if not q or q in seen:
             continue
         seen.add(q)
-        meta = await _tmdb.get_metadata(q)
+        meta = await _tmdb.get_movie_poster(q, year=year_int)
+        if year_int is not None and meta and meta.get("year") != year_int:
+            continue
         poster_url = (meta or {}).get("poster_url")
         if poster_url:
             data = await _fetch_bytes(poster_url)

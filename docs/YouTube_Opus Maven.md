@@ -1,6 +1,6 @@
 # YouTube Opus Maven — Operational Status
-**Version:** 5.2.0  
-**Last validated:** 2026-03-06  
+**Version:** 5.3.0  
+**Last validated:** 2026-03-07  
 **State:** Implemented and validated end-to-end on VPS.
 
 ## 1. Objective
@@ -45,7 +45,7 @@ Post-download enrichment path:
 - Uses MusicBrainz search to improve title / artist / album when the match is confident
 - Tries cover art in this order:
   - Cover Art Archive from MusicBrainz release / release-group
-  - TMDB poster fallback for soundtrack / film-style titles
+  - TMDB poster fallback for soundtrack / film-style titles, but only when year validation passes
   - TheAudioDB
 - Preserves existing embedded YouTube thumbnail when no authoritative art is found
 - Does not rename or move the file again after download
@@ -126,7 +126,12 @@ Behavior contract:
 - observed result:
   - source format: `251` / `126.1 kbps` Opus
   - enriched tags: title `Justuju Jiski Hai`, artist `Asha Bhosle`, album `Umrao Jaan`
-  - cover art source: `tmdb`
+  - cover art source: `coverartarchive-release`
+
+8. Wrong-poster prevention for film songs
+- TMDB fallback now rejects poster matches when the title year and TMDB movie year do not match
+- This prevents cases like `Umrao Jaan` resolving to the 2006 film when the raw title clearly indicates `1981`
+- If exact-year validation fails, the pipeline keeps searching lower-priority art sources or preserves the embedded YouTube thumbnail
 
 ## 5. Runtime Changes Applied in This Pass
 1. `docker-compose.yml`
