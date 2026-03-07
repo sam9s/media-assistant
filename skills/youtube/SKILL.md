@@ -26,6 +26,10 @@ Response includes:
 - `search_id`
 - `results[]` with `index`, `title`, `uploader`, `duration_str`, `in_playlist`, `playlist_name`
 
+Direct URL behavior:
+- If `query` is a YouTube URL, `/youtube/search` resolves that exact video and returns it as result `1`.
+- Still show the resolved result to Sam and wait for confirmation before download.
+
 ### Download
 ```http
 POST $MEDIA_API_URL/youtube/download
@@ -44,10 +48,19 @@ GET $MEDIA_API_URL/youtube/status/{download_id}
 ```
 
 `status` is one of: `starting`, `downloading`, `done`, `failed`.
+When available, status also includes:
+- `source_format_id`
+- `source_abr_kbps`
+- `source_acodec`
+- `saved_to`
+- `output_codec`
+- `output_sample_rate`
+- `output_bitrate_kbps`
 
 ## Workflow
 
 1. Call `/youtube/search` first (`check_playlist: true` unless Sam asks to skip playlist checks).
+   If Sam gives a direct YouTube URL, still call `/youtube/search` with that URL first so the exact resolved video is shown back for confirmation.
 2. Show top results and ask: which result + language (`english`, `hindi`, `punjabi`).
 3. Wait for Sam's pick.
 4. Call `/youtube/download`.

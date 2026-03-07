@@ -19,6 +19,10 @@ Endpoints:
 - `POST /youtube/download`
 - `GET /youtube/status/{download_id}`
 
+Current search behavior:
+- Text query -> playlist-first search, then general YouTube search
+- Direct YouTube URL in `query` -> exact video resolution, returned as result `1` for confirmation
+
 Current destination paths:
 - English: `/mnt/cloud/gdrive/Media/Music/English/YouTube_Music`
 - Hindi: `/mnt/cloud/gdrive/Media/Music/Hindi/YouTube_Music`
@@ -82,6 +86,21 @@ Behavior contract:
   - audio codec: `opus`
   - metadata tags present (`title`, `artist`, `album`, etc.)
   - embedded cover art present (`attached_pic=1`)
+
+### Passed (2026-03-07)
+5. Direct URL deterministic path
+- `POST /youtube/search` with a raw YouTube URL returned the exact video as result `1`
+- `/youtube/download` still used the standard `search_id + result_index` flow after confirmation
+
+6. Download diagnostics in status
+- `GET /youtube/status/{download_id}` now reports:
+  - `source_format_id`
+  - `source_abr_kbps`
+  - `source_acodec`
+  - `saved_to`
+  - `output_codec`
+  - `output_sample_rate`
+  - `output_bitrate_kbps` when ffprobe exposes it
 
 ## 5. Runtime Changes Applied in This Pass
 1. `docker-compose.yml`

@@ -20,6 +20,8 @@
 - Cookies runtime path activation is complete and validated (host + container visibility, strict invalid-cookie failure path).
 - YouTube extraction fix validated: `yt-dlp[default]` + `nodejs` + `--js-runtimes node` resolves challenge path for tested URLs.
 - YouTube outputs are language-specific: `Music/{English|Hindi|Punjabi}/YouTube_Music` (not root `Music/YouTube_Music`).
+- `/youtube/search` now resolves direct YouTube URLs deterministically as exact result `1`, while keeping the normal confirmation flow.
+- `/youtube/status` now exposes actual selected source format details (`source_format_id`, `source_abr_kbps`, `source_acodec`) plus saved path.
 - YouTube operational detail is documented in `docs/YouTube_Opus Maven.md`.
 
 ---
