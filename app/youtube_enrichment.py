@@ -9,16 +9,19 @@ import musicbrainzngs
 from mutagen.flac import Picture
 from mutagen.oggopus import OggOpus
 
+from app.config import settings
 from app.music_enrichment import (
     _fetch_bytes,
     _mb_release_from_recording,
     _theaudiodb_cover,
     _theaudiodb_track_cover,
 )
+from app.tmdb import TMDBClient
 
 logger = logging.getLogger("uvicorn.error")
 
 musicbrainzngs.set_useragent("SamAssist", "3.0", "sam@sam9scloud.in")
+_tmdb = TMDBClient(api_key=settings.TMDB_API_KEY)
 
 _CHANNEL_WORDS = {
     "official", "records", "music", "topic", "channel", "audio", "video",
@@ -85,6 +88,16 @@ def _album_from_context(text: str) -> str:
         return bits[0].strip(" -|")
     bits = [p.strip() for p in text.split("-") if p.strip()]
     return bits[0].strip(" -|") if bits else ""
+
+
+def _looks_like_soundtrack(raw_title: str, album: str, year: str) -> bool:
+    haystack = _normalize(" ".join(filter(None, [raw_title, album, year])))
+    if year:
+        return True
+    soundtrack_markers = {"ost", "soundtrack", "film", "movie"}
+    if any(marker in haystack.split() for marker in soundtrack_markers):
+        return True
+    return bool(album and raw_title and _normalize(album) in haystack)
 
 
 def _build_candidates(raw_title: str, raw_uploader: str) -> list[dict]:
@@ -166,6 +179,71 @@ def _best_recording_match(candidates: list[dict]) -> Optional[dict]:
     return None
 
 
+def _mb_release_cover_ids(recording_id: str) -> dict:
+    """Return best available MusicBrainz release and release-group ids for cover art."""
+    try:
+        result = musicbrainzngs.get_recording_by_id(
+            recording_id,
+            includes=["releases", "release-groups"],
+        )
+        recording = result.get("recording", {})
+        releases = recording.get("release-list", []) or []
+        if not releases:
+            return {}
+        rel = releases[0]
+        release_group = rel.get("release-group", {}) or {}
+        return {
+            "release_id": rel.get("id"),
+            "release_group_id": release_group.get("id"),
+        }
+    except Exception as e:
+        logger.warning("MusicBrainz release-id lookup failed for %s: %s", recording_id, e)
+        return {}
+
+
+async def _cover_art_archive_cover(release_id: str = "", release_group_id: str = "") -> tuple[Optional[bytes], Optional[str]]:
+    candidates = []
+    if release_id:
+        candidates.append(("coverartarchive-release", f"https://coverartarchive.org/release/{release_id}/front-500"))
+        candidates.append(("coverartarchive-release", f"https://coverartarchive.org/release/{release_id}/front"))
+    if release_group_id:
+        candidates.append(("coverartarchive-release-group", f"https://coverartarchive.org/release-group/{release_group_id}/front-500"))
+        candidates.append(("coverartarchive-release-group", f"https://coverartarchive.org/release-group/{release_group_id}/front"))
+    for source, url in candidates:
+        data = await _fetch_bytes(url)
+        if data:
+            return data, source
+    return None, None
+
+
+async def _tmdb_cover(raw_title: str, album: str, year: str) -> tuple[Optional[bytes], Optional[str]]:
+    if not settings.TMDB_API_KEY:
+        return None, None
+    queries = []
+    if album and year:
+        queries.append(f"{album} {year}")
+    if album:
+        queries.append(album)
+    if raw_title and album and raw_title != album:
+        queries.append(f"{album} {raw_title}")
+    if raw_title:
+        queries.append(raw_title)
+
+    seen = set()
+    for query in queries:
+        q = query.strip()
+        if not q or q in seen:
+            continue
+        seen.add(q)
+        meta = await _tmdb.get_metadata(q)
+        poster_url = (meta or {}).get("poster_url")
+        if poster_url:
+            data = await _fetch_bytes(poster_url)
+            if data:
+                return data, "tmdb"
+    return None, None
+
+
 def _opus_write_tags(path: str, tags: dict, cover_bytes: Optional[bytes]) -> None:
     audio = OggOpus(path)
     for key, value in tags.items():
@@ -225,10 +303,23 @@ async def enrich_youtube_opus(path: str, raw_title: str, raw_uploader: str, sour
                 parsed_artist = _cleanup_title(raw_uploader)
             artist = parsed_artist or raw_uploader
 
-        cover_url = await _theaudiodb_cover(artist, album) if artist and album else None
-        if not cover_url and artist and title:
-            cover_url = await _theaudiodb_track_cover(artist, title)
-        cover_bytes = await _fetch_bytes(cover_url) if cover_url else None
+        cover_bytes = None
+        cover_source = None
+        if best:
+            ids = await asyncio.to_thread(_mb_release_cover_ids, best["recording_id"])
+            cover_bytes, cover_source = await _cover_art_archive_cover(
+                release_id=ids.get("release_id", ""),
+                release_group_id=ids.get("release_group_id", ""),
+            )
+        if not cover_bytes and _looks_like_soundtrack(raw_title, album, year):
+            cover_bytes, cover_source = await _tmdb_cover(raw_title, album, year)
+        if not cover_bytes:
+            cover_url = await _theaudiodb_cover(artist, album) if artist and album else None
+            if not cover_url and artist and title:
+                cover_url = await _theaudiodb_track_cover(artist, title)
+            cover_bytes = await _fetch_bytes(cover_url) if cover_url else None
+            if cover_bytes:
+                cover_source = "theaudiodb"
 
         tags = {
             "title": title,
@@ -248,7 +339,7 @@ async def enrich_youtube_opus(path: str, raw_title: str, raw_uploader: str, sour
             "enriched_artist": artist,
             "enriched_album": album or title,
             "cover_art_applied": has_cover,
-            "cover_art_source": "theaudiodb" if cover_bytes else ("existing-embedded" if has_cover else None),
+            "cover_art_source": cover_source if cover_bytes else ("existing-embedded" if has_cover else None),
         })
     except Exception as e:
         logger.warning("YouTube enrichment failed for %s: %s", path, e)

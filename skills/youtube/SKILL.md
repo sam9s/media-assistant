@@ -95,9 +95,13 @@ Important:
 
 - After a successful download, the API runs a second enrichment pass on the saved `.opus`.
 - It tries to match the track against MusicBrainz and then improve tags and album naming.
-- It tries to fetch better cover art from the same metadata stack used by the music pipeline.
+- It tries cover art in this order:
+- `Cover Art Archive` from MusicBrainz release / release-group
+- `TMDB` poster fallback for film / soundtrack-style titles
+- `TheAudioDB`
+- existing embedded YouTube thumbnail
 - If the match is weak, it keeps the yt-dlp metadata instead of forcing bad tags.
-- If no authoritative art is found, the existing embedded YouTube thumbnail is preserved.
+- If no stronger art is found, the existing embedded YouTube thumbnail is preserved.
 
 ## Failure Handling
 

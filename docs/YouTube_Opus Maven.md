@@ -43,7 +43,10 @@ Download command path uses:
 
 Post-download enrichment path:
 - Uses MusicBrainz search to improve title / artist / album when the match is confident
-- Tries TheAudioDB for better cover art
+- Tries cover art in this order:
+  - Cover Art Archive from MusicBrainz release / release-group
+  - TMDB poster fallback for soundtrack / film-style titles
+  - TheAudioDB
 - Preserves existing embedded YouTube thumbnail when no authoritative art is found
 - Does not rename or move the file again after download
 
@@ -123,7 +126,7 @@ Behavior contract:
 - observed result:
   - source format: `251` / `126.1 kbps` Opus
   - enriched tags: title `Justuju Jiski Hai`, artist `Asha Bhosle`, album `Umrao Jaan`
-  - cover art source remained `existing-embedded` because no stronger authoritative art was returned by the current metadata sources
+  - cover art source: `tmdb`
 
 ## 5. Runtime Changes Applied in This Pass
 1. `docker-compose.yml`
