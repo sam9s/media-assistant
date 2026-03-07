@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from app import navidrome
 from app.config import settings
+from app.youtube_enrichment import enrich_youtube_opus
 
 logger = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/youtube", tags=["youtube"])
@@ -365,7 +366,7 @@ async def _probe_audio_file(path: str) -> dict:
 # Download background task
 # ---------------------------------------------------------------------------
 
-async def _yt_download_task(download_id: str, url: str, title: str, language: str) -> None:
+async def _yt_download_task(download_id: str, url: str, title: str, uploader: str, language: str) -> None:
     dest = _DEST.get(language, _DEST["english"])
     state = _yt_downloads[download_id]
     state["status"] = "downloading"
@@ -418,6 +419,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, language: st
             state["saved_to"] = saved_to
             if state.get("saved_to"):
                 state.update(await _probe_audio_file(state["saved_to"]))
+                state.update(await enrich_youtube_opus(state["saved_to"], title, uploader, url))
             state["status"] = "done"
             logger.info("yt-dlp done: %s", title)
             try:
@@ -533,6 +535,7 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
     entry = results[req.result_index - 1]
     url = entry["url"]
     title = entry["title"]
+    uploader = entry.get("uploader", "")
 
     download_id = str(uuid.uuid4())
     _yt_downloads[download_id] = {
@@ -547,9 +550,16 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
         "output_codec": None,
         "output_sample_rate": None,
         "output_bitrate_kbps": None,
+        "enrichment_status": None,
+        "enrichment_source": None,
+        "enriched_title": None,
+        "enriched_artist": None,
+        "enriched_album": None,
+        "cover_art_applied": False,
+        "cover_art_source": None,
     }
 
-    asyncio.create_task(_yt_download_task(download_id, url, title, lang))
+    asyncio.create_task(_yt_download_task(download_id, url, title, uploader, lang))
 
     return {
         "success":     True,

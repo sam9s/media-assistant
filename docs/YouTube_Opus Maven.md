@@ -9,6 +9,7 @@ Provide Raven/OpenClaw endpoints to:
 - queue a selected result for background audio extraction with `yt-dlp`
 - deliver output to language-specific `YouTube_Music` folders
 - trigger Navidrome scan after successful download
+- run a safe post-download metadata enrichment pass on saved `.opus` files
 
 ## 2. Current Implementation (Code Truth)
 Implemented router: `app/youtube.py`  
@@ -39,6 +40,12 @@ Download command path uses:
   - fallback `bestaudio[acodec=opus]`
   - fallback `bestaudio[ext=webm]`
   - fallback `bestaudio`
+
+Post-download enrichment path:
+- Uses MusicBrainz search to improve title / artist / album when the match is confident
+- Tries TheAudioDB for better cover art
+- Preserves existing embedded YouTube thumbnail when no authoritative art is found
+- Does not rename or move the file again after download
 
 ## 3. Cookies Runtime Model (Mandatory)
 Cookies file path used by app config:
@@ -101,6 +108,22 @@ Behavior contract:
   - `output_codec`
   - `output_sample_rate`
   - `output_bitrate_kbps` when ffprobe exposes it
+
+7. Post-download metadata enrichment
+- `GET /youtube/status/{download_id}` now also reports:
+  - `enrichment_status`
+  - `enrichment_source`
+  - `enriched_title`
+  - `enriched_artist`
+  - `enriched_album`
+  - `cover_art_applied`
+  - `cover_art_source`
+- validated on:
+  - `https://youtu.be/wv3gUO9Eo0E?si=RrpUwzIRGdWhDBeY`
+- observed result:
+  - source format: `251` / `126.1 kbps` Opus
+  - enriched tags: title `Justuju Jiski Hai`, artist `Asha Bhosle`, album `Umrao Jaan`
+  - cover art source remained `existing-embedded` because no stronger authoritative art was returned by the current metadata sources
 
 ## 5. Runtime Changes Applied in This Pass
 1. `docker-compose.yml`

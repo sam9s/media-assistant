@@ -56,6 +56,13 @@ When available, status also includes:
 - `output_codec`
 - `output_sample_rate`
 - `output_bitrate_kbps`
+- `enrichment_status`
+- `enrichment_source`
+- `enriched_title`
+- `enriched_artist`
+- `enriched_album`
+- `cover_art_applied`
+- `cover_art_source`
 
 ## Workflow
 
@@ -65,6 +72,7 @@ When available, status also includes:
 3. Wait for Sam's pick.
 4. Call `/youtube/download`.
 5. If asked, call `/youtube/status/{download_id}` and report progress.
+   When `status = done`, prefer reporting the enriched metadata if `enrichment_status = applied`.
 
 ## Output Paths
 
@@ -82,6 +90,14 @@ Important:
 - `youtube_cookies.txt` must be valid in runtime.
 - If cookies are missing or invalid, download fails immediately with a clear error.
 - No silent downgrade behavior.
+
+## Metadata Enrichment
+
+- After a successful download, the API runs a second enrichment pass on the saved `.opus`.
+- It tries to match the track against MusicBrainz and then improve tags and album naming.
+- It tries to fetch better cover art from the same metadata stack used by the music pipeline.
+- If the match is weak, it keeps the yt-dlp metadata instead of forcing bad tags.
+- If no authoritative art is found, the existing embedded YouTube thumbnail is preserved.
 
 ## Failure Handling
 
