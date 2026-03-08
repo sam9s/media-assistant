@@ -1,14 +1,4 @@
-"""
-AzuraCast radio helpers.
-
-Phase 1/2 scope:
-  - expose public now-playing through our API
-  - accept MP3 uploads into the shared radio library folder
-
-The live AzuraCast station is expected to see files from the shared library path.
-Immediate explicit rescan is not wired here yet; AzuraCast background sync handles it.
-"""
-import os
+"""AzuraCast radio helpers."""
 import re
 from pathlib import Path
 
@@ -54,6 +44,38 @@ def _coerce_bool(value: str | bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _azuracast_headers() -> dict[str, str]:
+    if not settings.AZURACAST_API_KEY:
+        raise HTTPException(status_code=500, detail="AzuraCast API key is not configured")
+    return {"Authorization": f"Bearer {settings.AZURACAST_API_KEY}"}
+
+
+def _station_files_url() -> str:
+    base = settings.AZURACAST_URL.rstrip("/")
+    return f"{base}/api/station/{settings.AZURACAST_STATION_ID}/files"
+
+
+def _station_upload_url() -> str:
+    return f"{_station_files_url()}/upload"
+
+
+def _station_file_url(file_id: int | str) -> str:
+    base = settings.AZURACAST_URL.rstrip("/")
+    return f"{base}/api/station/{settings.AZURACAST_STATION_ID}/file/{file_id}"
+
+
+async def _list_station_files(client: httpx.AsyncClient) -> list[dict]:
+    resp = await client.get(_station_files_url(), headers=_azuracast_headers())
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, list) else []
+
+
+async def _find_station_files_by_path(client: httpx.AsyncClient, path: str) -> list[dict]:
+    files = await _list_station_files(client)
+    return [item for item in files if (item.get("path") or "").strip() == path]
 
 
 @router.get("/nowplaying")
@@ -114,41 +136,73 @@ async def radio_upload(
     if Path(file.filename).suffix.lower() != ".mp3":
         raise HTTPException(status_code=400, detail="Only MP3 uploads are supported for radio")
 
-    dest_dir = settings.RADIO_LIBRARY_PATH
-    os.makedirs(dest_dir, exist_ok=True)
-
     dest_name = _safe_mp3_name(file.filename)
-    dest_path = os.path.join(dest_dir, dest_name)
-
     replace_existing = _coerce_bool(replace)
 
-    if os.path.exists(dest_path) and not replace_existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"File already exists in radio library: {dest_name}",
-        )
-
     try:
-        with open(dest_path, "wb") as out_f:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                out_f.write(chunk)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {exc}")
+        file_bytes = await file.read()
     finally:
         await file.close()
 
-    size_bytes = os.path.getsize(dest_path)
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded MP3 is empty")
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            existing = await _find_station_files_by_path(client, dest_name)
+
+            if existing and not replace_existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"File already exists in AzuraCast media library: {dest_name}",
+                )
+
+            if existing and replace_existing:
+                for item in existing:
+                    delete_resp = await client.delete(
+                        _station_file_url(item["id"]),
+                        headers=_azuracast_headers(),
+                    )
+                    delete_resp.raise_for_status()
+
+            upload_resp = await client.post(
+                _station_upload_url(),
+                headers=_azuracast_headers(),
+                files={"file": (dest_name, file_bytes, "audio/mpeg")},
+            )
+            upload_resp.raise_for_status()
+
+            created = await _find_station_files_by_path(client, dest_name)
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AzuraCast upload failed: {exc.response.status_code} {exc.response.text[:300]}",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AzuraCast upload failed: {exc}")
+
+    if not created:
+        raise HTTPException(
+            status_code=502,
+            detail="AzuraCast upload succeeded but the file was not indexed immediately after upload",
+        )
+
+    created_record = created[-1]
+
+    size_bytes = len(file_bytes)
     return {
         "success": True,
-        "saved_to": dest_path,
+        "saved_to": f"{settings.RADIO_LIBRARY_PATH.rstrip('/')}/{dest_name}",
         "filename": dest_name,
         "size_mb": round(size_bytes / (1024 * 1024), 2),
+        "azuracast_file_id": created_record.get("id"),
+        "azuracast_path": created_record.get("path"),
         "station_shortcode": settings.AZURACAST_STATION_SHORTCODE,
         "replace": replace_existing,
-        "scan_triggered": False,
-        "scan_mode": "azuracast scheduled sync",
-        "message": "MP3 saved into the shared radio library. AzuraCast should ingest it on its scheduled media sync.",
+        "native_upload": True,
+        "scan_triggered": True,
+        "scan_mode": "azuracast native upload api",
+        "message": "MP3 uploaded directly into AzuraCast station media and indexed successfully.",
     }

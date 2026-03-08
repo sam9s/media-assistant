@@ -76,6 +76,8 @@ class Settings(BaseSettings):
 
     # AzuraCast — internet radio
     AZURACAST_URL: str = "https://radio.sam9scloud.in"
+    AZURACAST_API_KEY: str = ""
+    AZURACAST_STATION_ID: int = 2
     AZURACAST_STATION_SHORTCODE: str = "sam9s.radio"
     RADIO_LIBRARY_PATH: str = "/mnt/cloud/gdrive/Media/Radio"
 

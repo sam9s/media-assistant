@@ -46,10 +46,9 @@
 - `sam-media-api` now has:
   - `GET /radio/nowplaying`
   - `POST /radio/upload`
-- Upload saves MP3s into `/mnt/cloud/gdrive/Media/Radio`
-- AzuraCast runs its own scheduled media sync loop.
+- Upload uses AzuraCast's native media upload API and lands in the station media library.
 - Phase 1 is implemented and validated.
-- Phase 2 upload is implemented, but new-file ingestion from the Google Drive-backed radio folder is not yet deterministic enough to mark fully validated.
+- Phase 2 is implemented and validated.
 - Phase 3 remains pending:
   - DJ drops / liners / rotation rules
 
@@ -57,11 +56,8 @@
 
 - `GET /radio/nowplaying` returns live station metadata and current song.
 - Station playback recovered after migration and no longer falls back to the error track.
-- `POST /radio/upload` was tested and confirmed to save MP3s into the shared radio folder.
+- `POST /radio/upload` was tested and confirmed to:
+  - upload via native AzuraCast API
+  - index immediately in AzuraCast media
+  - return the created AzuraCast file ID/path
 - Temporary migration/test duplicates were removed from both the folder and AzuraCast DB after validation.
-
-## Current blocker
-
-- Newly uploaded root-level MP3s on `/mnt/cloud/gdrive/Media/Radio` are not being indexed by AzuraCast reliably enough through the current shared-folder sync path.
-- Existing migrated station media plays correctly, so the migration itself is sound.
-- The next likely fix is to use AzuraCast's native media upload API instead of relying on raw writes into the Google Drive-backed folder for new radio files.

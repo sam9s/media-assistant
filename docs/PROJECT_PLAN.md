@@ -31,13 +31,13 @@
   - UI: `https://slsk.sam9scloud.in`
   - Direct raw port `69.62.73.167:5030` is no longer publicly reachable
   - `sam-media-api` now talks to `slskd` via internal Docker service name `http://slskd:5030`
-- AzuraCast radio phase 1 is implemented and validated. Phase 2 upload flow is implemented but not yet fully validated for new-file ingestion.
+- AzuraCast radio phase 1 and phase 2 are implemented and validated.
   - Live station: `sam9s.radio`
   - Public stream: `https://radio.sam9scloud.in/listen/sam9s.radio/radio.mp3`
   - Canonical radio library: `/mnt/cloud/gdrive/Media/Radio`
   - AzuraCast now reads station media from that shared library path
   - Radio API endpoints live: `GET /radio/nowplaying`, `POST /radio/upload`
-  - MP3 uploads are saved into the shared radio folder, but automatic AzuraCast ingestion of newly written files on that Google Drive-backed path is not yet deterministic
+  - MP3 uploads now use AzuraCast's native media upload API and are indexed immediately
   - Radio phase 3 is intentionally deferred for later planning: DJ drops / liners / rotation rules
   - Detailed handoff/status doc: `docs/RADIO_AZURACAST_STATUS.md`
 
@@ -520,9 +520,8 @@ Response:
 - Duplicate handling: returns `409` unless `replace=true`
 
 Current behavior:
-- saves file to radio library
-- relies on AzuraCast scheduled sync to detect it
-- new-file ingestion through the shared Google Drive-backed path still needs a stronger hook (likely native AzuraCast media upload API) before this flow should be considered fully reliable
+- uploads MP3 directly into AzuraCast station media using the authenticated native API
+- verifies the file is indexed immediately after upload
 
 ---
 

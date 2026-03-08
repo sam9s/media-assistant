@@ -36,8 +36,7 @@ replace=false
 ### When Sam asks to add a song to radio
 1. Confirm the file is an MP3.
 2. Call `POST /radio/upload` with the MP3 file.
-3. After success, tell Sam the file was saved into the radio library.
-4. Do not overclaim immediate on-air availability; new-file ingestion from the shared folder still depends on AzuraCast media sync behavior and should be verified when needed.
+3. After success, tell Sam the file was uploaded directly into AzuraCast station media and indexed successfully.
 
 ## Important rules
 
@@ -46,3 +45,4 @@ replace=false
 - Do not talk about playlists unless Sam asks; the station is treated as one random radio pool.
 - If the file already exists and Sam did not ask to replace it, stop and tell Sam.
 - `replace` accepts normal truthy values such as `true`, `1`, `yes`, `on`.
+- Uploads use AzuraCast's native media API, not a raw shared-folder write.

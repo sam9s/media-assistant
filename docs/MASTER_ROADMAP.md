@@ -23,7 +23,7 @@
 - Phase 1:
   - migrate station media to `/mnt/cloud/gdrive/Media/Radio` - implemented
 - Phase 2:
-  - upload MP3 into radio folder - implemented, ingestion path still needs hardening
+  - upload MP3 into radio via native AzuraCast media API - implemented
   - expose `GET /radio/nowplaying` - implemented
 - Phase 3:
   - DJ drops / liners / rotation rules
