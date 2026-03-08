@@ -49,12 +49,15 @@ services:
     container_name: slskd
     restart: unless-stopped
     ports:
-      - "0.0.0.0:5030:5030"     # Web UI + API (reachable from Docker at 172.17.0.1:5030)
+      - "127.0.0.1:5030:5030"   # Web UI/API reachable via Caddy on the host; internal Docker uses slskd:5030
       - "0.0.0.0:2234:2234/tcp" # Soulseek P2P (must be open to internet)
     volumes:
       - /root/apps/slskd/slskd.yml:/app/slskd.yml:ro
       - slskd_data:/app/data
       - /mnt/cloud/gdrive/Media/Music/Downloads:/app/downloads  # slskd writes here by default
+      - /mnt/cloud/gdrive/Media/Music/English:/shares/English:ro
+      - /mnt/cloud/gdrive/Media/Music/Hindi:/shares/Hindi:ro
+      - /mnt/cloud/gdrive/Media/Music/Punjabi:/shares/Punjabi:ro
     networks:
       - internal
 

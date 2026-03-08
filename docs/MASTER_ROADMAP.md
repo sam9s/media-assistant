@@ -8,21 +8,34 @@
 
 ---
 
-## Phase 3.5: Music Sharing (Pending)
+## Phase 3.5: Music Sharing (Implemented)
 - Goal: contribute back to P2P by sharing libraries
-- Task: add read-only mounts for English/Hindi/Punjabi music into slskd container
-- Network: open required Soulseek port on VPS firewall
+- Implemented:
+  - read-only `English`, `Hindi`, `Punjabi` mounts added to `slskd`
+  - `slskd` share scan validated
+  - HTTPS web UI added at `https://slsk.sam9scloud.in`
+  - raw public `:5030` access closed; direct IP access no longer works
 
 ---
 
-## Phase 4: Audiobook Maven (Current Focus)
+## Phase 4: AzuraCast Radio (Current Focus)
+- Goal: make Raven Radio manageable from chat
+- Phase 1:
+  - migrate station media to `/mnt/cloud/gdrive/Media/Radio` - implemented
+- Phase 2:
+  - upload MP3 into radio folder - implemented, ingestion path still needs hardening
+  - expose `GET /radio/nowplaying` - implemented
+- Phase 3:
+  - DJ drops / liners / rotation rules
+
+## Phase 5: Audiobook Maven
 - Goal: automate audiobook acquisition and podcast management
 - Task: connect Raven to Audiobookshelf API
 - Logic: source audiobook-compatible formats, ingest, trigger Audiobookshelf scans
 
 ---
 
-## Phase 5: YouTube/Opus Maven (Implemented and Validated)
+## Phase 6: YouTube/Opus Maven (Implemented and Validated)
 - Goal: high-quality YouTube audio backups via `yt-dlp`
 - Implemented:
   - `/youtube/search`, `/youtube/download`, `/youtube/status/{download_id}`
@@ -36,6 +49,6 @@
 
 ---
 
-## Phase 6: Recommendation Engine (Future)
+## Phase 7: Recommendation Engine (Future)
 - Goal: personalized "Raven Recommends"
 - Logic: cross-reference current library with external trending/critic signals

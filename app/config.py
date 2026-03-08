@@ -53,9 +53,9 @@ class Settings(BaseSettings):
     SUBDL_LANGUAGES: str = "EN"
 
     # slskd (Soulseek) — P2P music downloader
-    # Use 172.17.0.1 (Docker bridge host IP) to reach slskd running on the VPS host.
-    # SLSKD_USERNAME / SLSKD_PASSWORD: slskd web UI credentials (default: slskd / slskd).
-    SLSKD_URL: str = "http://172.17.0.1:5030"
+    # Use the internal Docker service name so the API works even when the host port
+    # is bound to localhost-only behind Caddy.
+    SLSKD_URL: str = "http://slskd:5030"
     SLSKD_USERNAME: str = "slskd"
     SLSKD_PASSWORD: str = "slskd"
 
@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     NAVIDROME_USERNAME: str = ""
     NAVIDROME_PASSWORD: str = ""
 
+    # AzuraCast — internet radio
+    AZURACAST_URL: str = "https://radio.sam9scloud.in"
+    AZURACAST_STATION_SHORTCODE: str = "sam9s.radio"
+    RADIO_LIBRARY_PATH: str = "/mnt/cloud/gdrive/Media/Radio"
+
     # YouTube Opus Maven — comma-separated public playlist URLs to search first.
     # Leave blank to skip playlist search and go straight to YouTube search.
     YOUTUBE_PLAYLIST_URLS: str = ""
@@ -88,5 +93,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-

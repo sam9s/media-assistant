@@ -25,6 +25,22 @@
 - YouTube downloads now run a safe post-download enrichment pass: improve title/artist/album via MusicBrainz when match confidence is high, then resolve art with `Cover Art Archive -> TMDB (exact-year validated when year is present) -> TheAudioDB -> existing embedded thumbnail`.
 - YouTube operational detail is documented in `docs/YouTube_Opus Maven.md`.
 
+**Project state note (2026-03-08):**
+- Soulseek sharing is implemented and live through `slskd`.
+  - Shares: English, Hindi, Punjabi music libraries
+  - UI: `https://slsk.sam9scloud.in`
+  - Direct raw port `69.62.73.167:5030` is no longer publicly reachable
+  - `sam-media-api` now talks to `slskd` via internal Docker service name `http://slskd:5030`
+- AzuraCast radio phase 1 is implemented and validated. Phase 2 upload flow is implemented but not yet fully validated for new-file ingestion.
+  - Live station: `sam9s.radio`
+  - Public stream: `https://radio.sam9scloud.in/listen/sam9s.radio/radio.mp3`
+  - Canonical radio library: `/mnt/cloud/gdrive/Media/Radio`
+  - AzuraCast now reads station media from that shared library path
+  - Radio API endpoints live: `GET /radio/nowplaying`, `POST /radio/upload`
+  - MP3 uploads are saved into the shared radio folder, but automatic AzuraCast ingestion of newly written files on that Google Drive-backed path is not yet deterministic
+  - Radio phase 3 is intentionally deferred for later planning: DJ drops / liners / rotation rules
+  - Detailed handoff/status doc: `docs/RADIO_AZURACAST_STATUS.md`
+
 ---
 
 ## 1. WHAT IS BUILT
@@ -37,7 +53,6 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 
 **What was NOT built (future phases):**
 - Immich photo management
-- AzuraCast radio control
 - Audiobookshelf book search
 - Recommendation engine
 
@@ -46,6 +61,7 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - Anna's Archive: HTML scraper + Libgen two-step resolver (ads.php → get.php); no unofficial wrappers, httpx + BeautifulSoup only
 - EPUB structural validation (ZIP → container.xml → OPF → dc:title) rejects malformed files before Kavita ingestion
 - YouTube Opus Maven router (`/youtube/*`) with playlist-first search, background download worker, and Navidrome scan hook
+- Radio router (`/radio/*`) for AzuraCast now-playing and MP3 radio-library upload
 
 ---
 
@@ -98,6 +114,7 @@ media_assistant/
 │   ├── jellyfin.py      # Jellyfin API client (search, refresh_library)
 │   ├── kavita.py        # Kavita API client (login, search, get_library_id, scan_library)
 │   ├── librarian.py     # Librarian router — book search, download, EPUB validation, Kavita scan
+│   ├── radio.py         # Radio router — AzuraCast now-playing + MP3 upload to radio library
 │   └── sources/
 │       ├── gutendex.py          # Gutenberg/Gutendex search client
 │       ├── standard_ebooks.py   # Standard Ebooks search client
@@ -106,11 +123,14 @@ media_assistant/
 ├── skills/
 │   ├── media-assistant/
 │   │   └── SKILL.md     # Raven skill — movie/TV/music torrent pipeline
+│   ├── radio/
+│   │   └── SKILL.md     # Raven skill — AzuraCast radio upload + now-playing
 │   └── librarian/
 │       └── SKILL.md     # Raven skill — book search, download, Kavita
 ├── docs/
 │   ├── PROJECT_PLAN.md              ← THIS FILE
 │   ├── KAVITA_STATUS_AND_ANNA_PLAN.md  # Librarian current state
+│   ├── RADIO_AZURACAST_STATUS.md    # Radio current state and migration notes
 │   ├── INFRASTRUCTURE_AUDIT.md
 │   └── DR_RUNBOOK.md                # Backup + restore procedure
 ├── scripts/
@@ -461,6 +481,51 @@ Response: `{ "success": true, "saved_to": "...", "size_mb": 0.55, "kavita_safe":
 
 ---
 
+## 11b. RADIO ENDPOINTS
+
+All routes under `/radio/`, mounted from `app/radio.py`.
+
+### `GET /radio/nowplaying`
+**Auth required.** Proxies the public AzuraCast now-playing feed through our API and returns the configured station row.
+
+Response:
+```json
+{
+  "status": "ok",
+  "station": {
+    "id": 2,
+    "name": "sam9s.radio",
+    "shortcode": "sam9s.radio",
+    "listen_url": "https://radio.sam9scloud.in/listen/sam9s.radio/radio.mp3"
+  },
+  "listeners": { "total": 0, "unique": 0, "current": 0 },
+  "now_playing": {
+    "title": "...",
+    "artist": "...",
+    "album": "...",
+    "art": "...",
+    "played_at": 1772954896,
+    "duration": 345,
+    "playlist": "sam9sradio",
+    "is_request": false
+  }
+}
+```
+
+### `POST /radio/upload`
+**Auth required.** Accepts one MP3 file upload and saves it into the shared radio library folder.
+
+- Destination path: `/mnt/cloud/gdrive/Media/Radio`
+- Supported format in current phase: `.mp3` only
+- Duplicate handling: returns `409` unless `replace=true`
+
+Current behavior:
+- saves file to radio library
+- relies on AzuraCast scheduled sync to detect it
+- new-file ingestion through the shared Google Drive-backed path still needs a stronger hook (likely native AzuraCast media upload API) before this flow should be considered fully reliable
+
+---
+
 ## 12. RAVEN SKILL
 
 Located at: `skills/media-assistant/SKILL.md`
@@ -500,7 +565,7 @@ When Raven doesn't know the category, it asks: "Hollywood, Hindi, TV-Hollywood, 
 ## 15. FUTURE PHASES (not yet built)
 
 - **Immich photo search** â€” `GET /photos/search`
-- **AzuraCast radio control** â€” `POST /radio/play`, `GET /radio/nowplaying`
+- **AzuraCast radio phase 3** - DJ drops / liners / rotation rules
 - **Librarian improvements** - duplicate detection edge cases (title metadata mismatch), subtitle attachment to downloaded books
 - **Audiobookshelf** - audiobook search / ingestion
 - **Recommendation engine** â€” "suggest something like Blade Runner"
