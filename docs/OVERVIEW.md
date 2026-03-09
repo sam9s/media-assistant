@@ -106,7 +106,7 @@ Located in `openclaw/` and `skills/`:
 | Phase | What | Status |
 |---|---|---|
 | Phase 2 | Immich photo management — `GET /photos/search` | Planned |
-| Phase 3 | AzuraCast radio control — `GET /radio/nowplaying`, `POST /radio/upload` | In progress |
+| Phase 3 | AzuraCast radio control — `GET /radio/nowplaying`, `POST /radio/upload`, recursive radio batch importer | Implemented |
 | Phase 4 | Kavita / Audiobookshelf — book and audiobook search | Partially implemented |
 | Phase 5 | Recommendation engine — "suggest something like Blade Runner" | Planned |
 

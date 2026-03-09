@@ -47,6 +47,12 @@
   - `GET /radio/nowplaying`
   - `POST /radio/upload`
 - Upload uses AzuraCast's native media upload API and lands in the station media library.
+- Automated uploads currently target:
+  - `/mnt/cloud/gdrive/Media/Radio/Hindi`
+- A separate batch-import workflow now exists for mixed local folders:
+  - skill: `skills/radio-audio-import/SKILL.md`
+  - script: `skills/radio-audio-import/scripts/import_to_radio.py`
+  - behavior: recurse, skip FLAC, convert `.mp4` / `.webm` to temporary MP3, upload via `/radio/upload`
 - Phase 1 is implemented and validated.
 - Phase 2 is implemented and validated.
 - Phase 3 remains pending:
@@ -60,4 +66,7 @@
   - upload via native AzuraCast API
   - index immediately in AzuraCast media
   - return the created AzuraCast file ID/path
+- Recursive mixed-folder import was validated against:
+  - `D:\Softwares_Apps\Entertainment\MUSIC`
+  - Result: `17` eligible files imported successfully (`2` direct MP3, `15` converted from MP4/WEBM), `0` failures, `539` FLAC files skipped
 - Temporary migration/test duplicates were removed from both the folder and AzuraCast DB after validation.

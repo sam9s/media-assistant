@@ -38,6 +38,10 @@
   - AzuraCast now reads station media from that shared library path
   - Radio API endpoints live: `GET /radio/nowplaying`, `POST /radio/upload`
   - MP3 uploads now use AzuraCast's native media upload API and are indexed immediately
+  - Automated radio uploads currently land in `/mnt/cloud/gdrive/Media/Radio/Hindi`
+  - Recursive mixed-folder radio import is implemented and validated through `skills/radio-audio-import/scripts/import_to_radio.py`
+    - supported ingest: `.mp3` direct, `.mp4`/`.webm` converted to MP3
+    - skipped: `.flac` and unsupported file types
   - Radio phase 3 is intentionally deferred for later planning: DJ drops / liners / rotation rules
   - Detailed handoff/status doc: `docs/RADIO_AZURACAST_STATUS.md`
 
@@ -62,6 +66,7 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - EPUB structural validation (ZIP → container.xml → OPF → dc:title) rejects malformed files before Kavita ingestion
 - YouTube Opus Maven router (`/youtube/*`) with playlist-first search, background download worker, and Navidrome scan hook
 - Radio router (`/radio/*`) for AzuraCast now-playing and MP3 radio-library upload
+- Radio batch importer skill/script for recursive mixed-folder ingest into AzuraCast
 
 ---
 
@@ -125,6 +130,10 @@ media_assistant/
 │   │   └── SKILL.md     # Raven skill — movie/TV/music torrent pipeline
 │   ├── radio/
 │   │   └── SKILL.md     # Raven skill — AzuraCast radio upload + now-playing
+│   ├── radio-audio-import/
+│   │   ├── SKILL.md     # Raven skill — recursive mixed-folder import into radio
+│   │   └── scripts/
+│   │       └── import_to_radio.py
 │   └── librarian/
 │       └── SKILL.md     # Raven skill — book search, download, Kavita
 ├── docs/
@@ -515,13 +524,26 @@ Response:
 ### `POST /radio/upload`
 **Auth required.** Accepts one MP3 file upload and saves it into the shared radio library folder.
 
-- Destination path: `/mnt/cloud/gdrive/Media/Radio`
+- Destination path: `/mnt/cloud/gdrive/Media/Radio/Hindi`
 - Supported format in current phase: `.mp3` only
 - Duplicate handling: returns `409` unless `replace=true`
 
 Current behavior:
 - uploads MP3 directly into AzuraCast station media using the authenticated native API
 - verifies the file is indexed immediately after upload
+
+### Radio batch import workflow
+For mixed local media folders, use:
+
+`skills/radio-audio-import/scripts/import_to_radio.py`
+
+Current validated behavior:
+- recursively scans a source directory
+- uploads `.mp3` directly
+- converts `.mp4` and `.webm` to temporary MP3 with `ffmpeg`
+- skips `.flac`
+- uploads everything through `POST /radio/upload`
+- validated successfully on `D:\Softwares_Apps\Entertainment\MUSIC`
 
 ---
 
