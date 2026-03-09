@@ -83,7 +83,7 @@ API contract:
 POST $MEDIA_API_URL/music/import
 {
   "source_path": "/mnt/cloud/gdrive/Media/Music/Downloads/manual_imports/<id>/<source>",
-  "language": "hindi",
+  "language": "hindi",      // "english" | "hindi" | "punjabi" | "auto"
   "mode": "auto",         // "auto" | "album" | "track"
   "replace_existing": false
 }
@@ -168,28 +168,38 @@ Ask language + pick in one message. No need for two separate prompts.
 2. Use the helper script:
 
 ```bash
-python skills/music/scripts/manual_import_music.py <local_source_path> --language <english|hindi|punjabi> --api-url <MEDIA_API_URL> --api-key <MEDIA_API_KEY> --ssh-host root@69.62.73.167 --wait
+python skills/music/scripts/manual_import_music.py <local_source_path> --language <english|hindi|punjabi|auto> --api-url <MEDIA_API_URL> --api-key <MEDIA_API_KEY> --ssh-host root@69.62.73.167 --wait
 ```
 
 3. Let `mode=auto` unless Sam explicitly wants single-track handling.
-4. Report whether the import was treated as:
+4. For mixed collections, prefer `--language auto` so the pipeline routes albums/tracks to the correct language library.
+5. Report whether the import was treated as:
    - album
    - track
    - duplicate skipped
-5. After success, tell Sam the files were enriched and moved into Navidrome’s music library.
+6. After success, tell Sam the files were enriched and moved into Navidrome’s music library.
 
 ### When Sam wants to upgrade an older raw album already in the library
 
 Use:
 
 ```bash
-python skills/music/scripts/manual_import_music.py <local_source_path> --language <english|hindi|punjabi> --api-url <MEDIA_API_URL> --api-key <MEDIA_API_KEY> --ssh-host root@69.62.73.167 --replace-existing --wait
+python skills/music/scripts/manual_import_music.py <local_source_path> --language <english|hindi|punjabi|auto> --api-url <MEDIA_API_URL> --api-key <MEDIA_API_KEY> --ssh-host root@69.62.73.167 --replace-existing --wait
 ```
 
 Behavior:
 - if an older raw album/track already exists, the existing library copy is moved to the manual-import backup area
 - the newly enriched import replaces it
 - if the enriched destination already exists already, the older raw duplicate is removed from the library and the enriched copy is kept
+
+### Auto language routing
+
+When `language=auto`, the manual-import path classifies the item before delivery:
+- `punjabi` if artist/title/album cues match Punjabi artists
+- `hindi` if artist/title/album cues match Hindi/Bollywood artists or soundtrack naming
+- otherwise `english`
+
+This is intended for Sam's mixed local FLAC collections before the large manual import run.
 
 ### When status is `"stuck"`
 

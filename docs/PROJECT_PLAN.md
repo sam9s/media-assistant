@@ -56,6 +56,9 @@
   - Upgrade mode added for manual imports:
     - `replace_existing=true` replaces older raw library copies with the newly enriched import
     - replaced copies are moved to `/mnt/cloud/gdrive/Media/Music/Downloads/manual_import_replaced/`
+  - Auto language routing added for manual imports:
+    - `language=auto` classifies albums/tracks into `english`, `hindi`, or `punjabi` before delivery
+    - intended for the mixed `SoulSeek\\complete` library before the full import run
   - Existing skill updated with manual-import instructions
   - Helper script added: `skills/music/scripts/manual_import_music.py`
 - Controlled subset validation passed on:

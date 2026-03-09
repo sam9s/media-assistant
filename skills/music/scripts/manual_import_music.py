@@ -44,7 +44,7 @@ def get_status(api_url: str, api_key: str, download_id: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_path", help="Local FLAC file or album folder to import")
-    parser.add_argument("--language", required=True, choices=["english", "hindi", "punjabi"])
+    parser.add_argument("--language", required=True, choices=["english", "hindi", "punjabi", "auto"])
     parser.add_argument("--api-url", required=True)
     parser.add_argument("--api-key", required=True)
     parser.add_argument("--ssh-host", required=True, help="Example: root@69.62.73.167")

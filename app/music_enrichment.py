@@ -45,6 +45,27 @@ LANGUAGE_DIRS = {
     "punjabi": f"{MUSIC_ROOT}/Punjabi",
 }
 
+PUNJABI_KEYWORDS = {
+    "karan aujla", "diljit", "diljit dosanjh", "sidhu moose wala",
+    "ammy virk", "gurdas maan", "ap dhillon", "shubh", "guru randhawa",
+    "jazzy b", "yo yo honey singh", "harrdy sandhu", "nimrat khaira",
+    "navaan sandhu", "kulwinder billa", "arjan dhillon",
+}
+
+HINDI_KEYWORDS = {
+    "kishore kumar", "mohammed rafi", "asha bhosle", "lata mangeshkar",
+    "rd burman", "r d burman", "rahul dev burman", "bappi lahiri",
+    "a.r. rahman", "ar rahman", "alka yagnik", "anuradha paudwal",
+    "udit narayan", "kumar sanu", "sonu nigam", "shreya ghoshal",
+    "sunidhi chauhan", "jagjit singh", "javed ali", "hemant kumar",
+    "amitabh bachchan", "adnan sami", "atif aslam", "benny dayal",
+    "mohit chauhan", "rahat fateh ali khan", "abhijeet", "sukhwinder singh",
+    "anu malik", "laxmikant", "pyarelal", "bollywood", "hindi song",
+    "qayamat se qayamat tak", "amar akbar anthony", "umrao jaan",
+    "rockstar", "deewaar", "saagar", "bazaar", "utsav", "qurbani",
+    "khalnayak", "namak halaal", "anjaam", "shalimar", "disco dancer",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,6 +92,55 @@ def _backup_existing_path(path: Path) -> Path:
 
 def _norm_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def _contains_keyword(texts: list[str], keywords: set[str]) -> bool:
+    haystack = " | ".join((t or "").lower() for t in texts)
+    return any(keyword in haystack for keyword in keywords)
+
+
+async def _detect_album_language(
+    flac_files: list[Path],
+    artist: str,
+    album: str,
+    artist_hint: str = "",
+    album_hint: str = "",
+) -> str:
+    sample_texts = [artist, album, artist_hint, album_hint]
+    for flac in flac_files[:3]:
+        hints = _read_album_hints(flac)
+        sample_texts.extend([hints.get("artist", ""), hints.get("album", ""), flac.stem, flac.parent.name])
+
+    if _contains_keyword(sample_texts, PUNJABI_KEYWORDS):
+        return "punjabi"
+    if _contains_keyword(sample_texts, HINDI_KEYWORDS):
+        return "hindi"
+    return "english"
+
+
+async def _detect_track_language(
+    flac_path: Path,
+    artist: str,
+    title: str,
+    artist_hint: str = "",
+    title_hint: str = "",
+) -> str:
+    hints = _read_track_hints(flac_path)
+    sample_texts = [
+        artist,
+        title,
+        artist_hint,
+        title_hint,
+        hints.get("artist", ""),
+        hints.get("title", ""),
+        flac_path.stem,
+        flac_path.parent.name,
+    ]
+    if _contains_keyword(sample_texts, PUNJABI_KEYWORDS):
+        return "punjabi"
+    if _contains_keyword(sample_texts, HINDI_KEYWORDS):
+        return "hindi"
+    return "english"
 
 
 def _is_disc_dir(name: str) -> bool:
@@ -330,7 +400,6 @@ async def enrich_and_deliver(
     """
     logger.info("Enrichment started: %s → %s", download_folder, language)
 
-    dest_root = LANGUAGE_DIRS.get(language.lower(), LANGUAGE_DIRS["english"])
     folder = Path(download_folder)
 
     if not folder.exists():
@@ -355,6 +424,10 @@ async def enrich_and_deliver(
     album  = (meta or {}).get("album")  or album_hint  or tag_hints.get("album") or album_root.name
     year   = (meta or {}).get("year")   or tag_hints.get("year") or ""
     rg_id  = (meta or {}).get("release_group_id", "")
+    resolved_language = language.lower()
+    if resolved_language == "auto":
+        resolved_language = await _detect_album_language(flac_files, artist, album, artist_hint, album_hint)
+    dest_root = LANGUAGE_DIRS.get(resolved_language, LANGUAGE_DIRS["english"])
 
     # Detect hi-res (any file > 16-bit)
     is_hires = _detect_hires(flac_files)
@@ -376,6 +449,7 @@ async def enrich_and_deliver(
             "duplicate": True,
             "message": message,
             "destination": str(existing_dir) if existing_dir else "",
+            "language": resolved_language,
         }
 
     if replace_existing and existing_dir and existing_dir != dest and dest.exists():
@@ -388,6 +462,7 @@ async def enrich_and_deliver(
             "message": message,
             "destination": str(dest),
             "backup": str(backup),
+            "language": resolved_language,
         }
 
     # --- Step 3+4: Fetch art ---
@@ -440,18 +515,19 @@ async def enrich_and_deliver(
                 "duplicate": True,
                 "message": f"Destination already exists: {dest}",
                 "destination": str(dest),
+                "language": resolved_language,
             }
 
         shutil.move(str(delivery_root), str(dest))
         logger.info("Enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Enrichment move failed %s → %s: %s", delivery_root, dest, e)
-        return {"success": False, "message": f"move failed: {e}"}
+        return {"success": False, "message": f"move failed: {e}", "language": resolved_language}
 
     # --- Step 9: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan: %s", scan_result)
-    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result}
+    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result, "language": resolved_language}
 
 
 # ---------------------------------------------------------------------------
@@ -521,8 +597,6 @@ async def enrich_single_track(
         logger.error("Track enrichment: file not found: %s", flac_path)
         return {"success": False, "message": "file not found"}
 
-    dest_root = LANGUAGE_DIRS.get(language.lower(), LANGUAGE_DIRS["english"])
-
     # --- Step 1+2: Fingerprint → MBID → recording title + artist ---
     recording_id = await _fingerprint_to_mbid(flac_path)
     meta = None
@@ -533,6 +607,10 @@ async def enrich_single_track(
 
     artist = (meta or {}).get("artist") or artist_hint or tag_hints.get("artist") or "Unknown Artist"
     title  = (meta or {}).get("title")  or title_hint  or tag_hints.get("title") or file.stem
+    resolved_language = language.lower()
+    if resolved_language == "auto":
+        resolved_language = await _detect_track_language(file, artist, title, artist_hint, title_hint)
+    dest_root = LANGUAGE_DIRS.get(resolved_language, LANGUAGE_DIRS["english"])
 
     logger.info("Track enrichment metadata: artist=%r title=%r", artist, title)
 
@@ -545,6 +623,7 @@ async def enrich_single_track(
             "duplicate": True,
             "message": message,
             "destination": str(existing_file),
+            "language": resolved_language,
         }
 
     # --- Step 3: Fetch cover art ---
@@ -594,18 +673,19 @@ async def enrich_single_track(
                 "duplicate": True,
                 "message": f"Destination already exists: {dest}",
                 "destination": str(dest),
+                "language": resolved_language,
             }
 
         shutil.move(str(file), str(dest))
         logger.info("Track enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Track move failed %s → %s: %s", file, dest, e)
-        return {"success": False, "message": f"move failed: {e}"}
+        return {"success": False, "message": f"move failed: {e}", "language": resolved_language}
 
     # --- Step 8: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan after track delivery: %s", scan_result)
-    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result}
+    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result, "language": resolved_language}
 
 
 def _detect_hires(flac_files: list) -> bool:

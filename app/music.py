@@ -660,6 +660,8 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
                 replace_existing=replace_existing,
             )
         _downloads[download_id]["status"] = "done" if result.get("success") else "failed"
+        if result.get("language"):
+            _downloads[download_id]["language"] = result["language"]
         if result.get("message"):
             _downloads[download_id]["message"] = result["message"]
         if result.get("duplicate"):
