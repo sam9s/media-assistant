@@ -75,6 +75,7 @@ The helper script:
 - copies the local source file/folder to VPS staging
 - calls `POST $MEDIA_API_URL/music/import`
 - can wait on `GET $MEDIA_API_URL/music/status/{download_id}`
+- when used with `--wait`, it also cleans up the remote staging folder after the import finishes
 
 API contract:
 ```
@@ -172,6 +173,7 @@ python skills/music/scripts/manual_import_music.py <local_source_path> --languag
 4. Report whether the import was treated as:
    - album
    - track
+   - duplicate skipped
 5. After success, tell Sam the files were enriched and moved into Navidrome’s music library.
 
 ### When status is `"stuck"`

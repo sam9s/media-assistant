@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -518,16 +519,18 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
         )
         return
 
-    success = await enrich_and_deliver(
+    result = await enrich_and_deliver(
         download_folder=local_folder,
         language=info["language"],
         artist_hint=info.get("artist", ""),
         album_hint=info.get("album", ""),
     )
-    if not success:
+    if not result.get("success"):
         _downloads[download_id]["status"]  = "stuck"
-        _downloads[download_id]["message"] = "Enrichment failed — album could not be identified."
+        _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — album could not be identified."
         return
+    if result.get("message"):
+        _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
 
 
@@ -625,16 +628,18 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
         )
         return
 
-    success = await enrich_single_track(
+    result = await enrich_single_track(
         flac_path=local_path,
         language=info["language"],
         title_hint=info.get("title", ""),
         artist_hint=info.get("artist", ""),
     )
-    if not success:
+    if not result.get("success"):
         _downloads[download_id]["status"]  = "stuck"
-        _downloads[download_id]["message"] = "Enrichment failed — track could not be identified."
+        _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — track could not be identified."
         return
+    if result.get("message"):
+        _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
 
 
@@ -642,22 +647,37 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
     _downloads[download_id]["status"] = "enriching"
     try:
         if mode == "track":
-            ok = await enrich_single_track(
+            result = await enrich_single_track(
                 flac_path=source_path,
                 language=language,
             )
         else:
-            ok = await enrich_and_deliver(
+            result = await enrich_and_deliver(
                 download_folder=source_path,
                 language=language,
             )
-        _downloads[download_id]["status"] = "done" if ok else "failed"
-        if not ok:
-            _downloads[download_id]["message"] = "Manual import enrichment/delivery failed"
+        _downloads[download_id]["status"] = "done" if result.get("success") else "failed"
+        if result.get("message"):
+            _downloads[download_id]["message"] = result["message"]
+        if result.get("duplicate"):
+            _downloads[download_id]["duplicate"] = True
     except Exception as exc:
         logger.exception("Manual import failed for %s", source_path)
         _downloads[download_id]["status"] = "failed"
         _downloads[download_id]["message"] = str(exc)
+    finally:
+        if "/manual_imports/" in source_path:
+            try:
+                p = Path(source_path)
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                elif p.exists():
+                    p.unlink(missing_ok=True)
+                parent = p.parent
+                if parent.exists() and not any(parent.iterdir()):
+                    parent.rmdir()
+            except Exception as cleanup_exc:
+                logger.warning("Manual import cleanup failed for %s: %s", source_path, cleanup_exc)
 
 
 # ---------------------------------------------------------------------------

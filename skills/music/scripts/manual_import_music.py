@@ -94,6 +94,11 @@ def main() -> int:
             break
         time.sleep(5)
 
+    try:
+        run(["ssh", args.ssh_host, f"rm -rf {remote_base}"])
+    except Exception as exc:
+        output["cleanup_error"] = str(exc)
+
     print(json.dumps(output, indent=2))
     return 0 if output["status"].get("status") == "done" else 1
 

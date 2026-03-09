@@ -50,6 +50,9 @@
   - New API endpoint: `POST /music/import`
   - Existing status endpoint reused: `GET /music/status/{download_id}`
   - Existing enrichment path reused: AcoustID → MusicBrainz → cover art → FLAC embed → Navidrome scan
+  - Duplicate protection added for manual imports:
+    - album imports skip when the same album is already present in the target music library
+    - single-track imports skip when the same track already exists in the destination
   - Existing skill updated with manual-import instructions
   - Helper script added: `skills/music/scripts/manual_import_music.py`
 - Controlled subset validation passed on:
@@ -585,6 +588,7 @@ Current validated behavior:
 - stages a local FLAC file or folder to VPS-visible import storage
 - calls `POST /music/import`
 - waits on `GET /music/status/{download_id}` when requested
+- skips duplicate albums/tracks instead of creating second library copies
 - validated successfully on a controlled subset:
   - clean album folder
   - synthetic multi-disc `CD1` / `CD2` folder

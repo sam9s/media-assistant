@@ -30,7 +30,7 @@ import musicbrainzngs
 from mutagen.flac import FLAC, Picture
 
 from app.config import settings
-from app.navidrome import trigger_scan
+from app.navidrome import search_album, trigger_scan
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -52,6 +52,10 @@ def _safe_name(name: str) -> str:
     """Strip characters that are invalid in Linux filenames."""
     name = re.sub(r'[<>:"/\\?*\x00-\x1f|]', "", name)
     return re.sub(r" {2,}", " ", name).strip()
+
+
+def _norm_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
 def _is_disc_dir(name: str) -> bool:
@@ -108,6 +112,50 @@ def _read_track_hints(flac_path: Path) -> dict:
         "artist": _first("artist", "albumartist"),
         "title": _first("title"),
     }
+
+
+def _find_existing_album_dir(dest_root: Path, artist: str, album: str) -> Optional[Path]:
+    want_album = _norm_text(album)
+    want_artist = _norm_text(artist)
+    if not want_album or not dest_root.exists():
+        return None
+
+    for child in dest_root.iterdir():
+        if not child.is_dir() or child.name.lower() == "misc":
+            continue
+        flacs = sorted(child.rglob("*.flac"))
+        if not flacs:
+            continue
+        hints = _read_album_hints(flacs[0])
+        existing_album = _norm_text(hints.get("album") or child.name)
+        existing_artist = _norm_text(hints.get("artist") or child.name)
+        if existing_album != want_album:
+            continue
+        if not want_artist or not existing_artist or want_artist == existing_artist:
+            return child
+        if want_artist == "variousartists" or existing_artist == "variousartists":
+            return child
+    return None
+
+
+def _single_track_exists(dest_root: Path, artist: str, title: str, language: str) -> Optional[Path]:
+    if language.lower() == "punjabi":
+        search_root = dest_root
+    else:
+        search_root = dest_root / "Misc"
+    if not search_root.exists():
+        return None
+    want_artist = _norm_text(artist)
+    want_title = _norm_text(title)
+    for flac in search_root.rglob("*.flac"):
+        hints = _read_track_hints(flac)
+        existing_artist = _norm_text(hints.get("artist") or flac.stem)
+        existing_title = _norm_text(hints.get("title") or flac.stem)
+        if existing_title == want_title and (
+            not want_artist or not existing_artist or existing_artist == want_artist
+        ):
+            return flac
+    return None
 
 
 async def _fetch_bytes(url: str) -> Optional[bytes]:
@@ -255,7 +303,7 @@ async def enrich_and_deliver(
     language: str,
     artist_hint: str = "",
     album_hint: str = "",
-) -> bool:
+) -> dict:
     """
     Full enrichment pipeline. Runs as a background task.
 
@@ -271,12 +319,12 @@ async def enrich_and_deliver(
 
     if not folder.exists():
         logger.error("Enrichment: download folder not found: %s", download_folder)
-        return False
+        return {"success": False, "message": "download folder not found"}
 
     flac_files = sorted(folder.rglob("*.flac"))
     if not flac_files:
         logger.warning("Enrichment: no FLAC files found in %s", download_folder)
-        return False
+        return {"success": False, "message": "no FLAC files found"}
 
     album_root = _album_root_from_flacs(folder, flac_files)
     tag_hints = _read_album_hints(flac_files[0])
@@ -297,6 +345,18 @@ async def enrich_and_deliver(
     quality_tag = "FLAC 24bit" if is_hires else "FLAC"
 
     logger.info("Enrichment metadata: artist=%r album=%r year=%r hires=%s", artist, album, year, is_hires)
+
+    existing_dir = _find_existing_album_dir(Path(dest_root), artist, album)
+    navidrome_exists = await search_album(artist, album)
+    if existing_dir or navidrome_exists:
+        message = f"Album already exists: {existing_dir or f'Navidrome:{artist} - {album}'}"
+        logger.info("Album duplicate detected, skipping manual delivery: %s", message)
+        return {
+            "success": True,
+            "duplicate": True,
+            "message": message,
+            "destination": str(existing_dir) if existing_dir else "",
+        }
 
     # --- Step 3+4: Fetch art ---
     cover_bytes = None
@@ -338,17 +398,23 @@ async def enrich_and_deliver(
     try:
         if dest.exists():
             logger.warning("Destination already exists, skipping move: %s", dest)
+            return {
+                "success": True,
+                "duplicate": True,
+                "message": f"Destination already exists: {dest}",
+                "destination": str(dest),
+            }
         else:
             shutil.move(str(delivery_root), str(dest))
             logger.info("Enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Enrichment move failed %s → %s: %s", delivery_root, dest, e)
-        return False
+        return {"success": False, "message": f"move failed: {e}"}
 
     # --- Step 9: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan: %s", scan_result)
-    return True
+    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result}
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +467,7 @@ async def enrich_single_track(
     language: str,
     title_hint: str = "",
     artist_hint: str = "",
-) -> bool:
+) -> dict:
     """
     Enrich and deliver a single FLAC track to the Misc/ folder.
 
@@ -415,7 +481,7 @@ async def enrich_single_track(
     file = Path(flac_path)
     if not file.exists():
         logger.error("Track enrichment: file not found: %s", flac_path)
-        return False
+        return {"success": False, "message": "file not found"}
 
     dest_root = LANGUAGE_DIRS.get(language.lower(), LANGUAGE_DIRS["english"])
 
@@ -431,6 +497,17 @@ async def enrich_single_track(
     title  = (meta or {}).get("title")  or title_hint  or tag_hints.get("title") or file.stem
 
     logger.info("Track enrichment metadata: artist=%r title=%r", artist, title)
+
+    existing_file = _single_track_exists(Path(dest_root), artist, title, language)
+    if existing_file:
+        message = f"Track already exists: {existing_file}"
+        logger.info("Track duplicate detected, skipping manual delivery: %s", message)
+        return {
+            "success": True,
+            "duplicate": True,
+            "message": message,
+            "destination": str(existing_file),
+        }
 
     # --- Step 3: Fetch cover art ---
     cover_bytes = None
@@ -466,17 +543,23 @@ async def enrich_single_track(
     try:
         if dest.exists():
             logger.warning("Destination already exists, skipping: %s", dest)
+            return {
+                "success": True,
+                "duplicate": True,
+                "message": f"Destination already exists: {dest}",
+                "destination": str(dest),
+            }
         else:
             shutil.move(str(file), str(dest))
             logger.info("Track enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Track move failed %s → %s: %s", file, dest, e)
-        return False
+        return {"success": False, "message": f"move failed: {e}"}
 
     # --- Step 8: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan after track delivery: %s", scan_result)
-    return True
+    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result}
 
 
 def _detect_hires(flac_files: list) -> bool:
