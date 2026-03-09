@@ -32,10 +32,9 @@ def _safe_mp3_name(filename: str) -> str:
 
 def _normalize_station_path(path: str) -> str:
     base = Path(path or "").name.lower()
-    stem = Path(base).stem
-    suffix = Path(base).suffix.lower()
-    stem = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
-    return f"{stem}{suffix}"
+    base = re.sub(r"\s+", "_", base)
+    base = re.sub(r"[^a-z0-9._\-\(\)\[\]]+", "", base)
+    return base
 
 
 def _pick_station(payload: list[dict]) -> dict | None:
@@ -169,6 +168,8 @@ async def radio_upload(
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
+            before_files = await _list_station_files(client)
+            before_ids = {item.get("id") for item in before_files}
             existing = await _find_station_files_by_path(client, target_path)
 
             if existing and not replace_existing:
@@ -197,6 +198,11 @@ async def radio_upload(
             for _ in range(10):
                 created = await _find_station_files_by_path(client, target_path)
                 if created:
+                    break
+                current_files = await _list_station_files(client)
+                new_items = [item for item in current_files if item.get("id") not in before_ids]
+                if new_items:
+                    created = new_items
                     break
                 await asyncio.sleep(1)
     except HTTPException:
