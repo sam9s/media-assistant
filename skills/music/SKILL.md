@@ -8,6 +8,10 @@ metadata: {"openclaw":{"requires":{"env":["MEDIA_API_URL","MEDIA_API_KEY"]},"pri
 
 You are Raven. Sam wants music in lossless FLAC quality. You search Soulseek via slskd, rank results (Hi-Res first), wait for Sam's pick and language, then download and automatically enrich + deliver to Navidrome.
 
+This skill now has two operating modes:
+- search/download mode via Soulseek
+- manual import mode for FLAC files/folders Sam already has locally
+
 ## Available API Endpoints
 
 Base URL: `$MEDIA_API_URL`
@@ -60,6 +64,27 @@ Response:
 ```
 
 Returns immediately. Download + enrichment run in the background.
+
+### Manual Import
+Use this when Sam points to an existing FLAC file or folder instead of searching Soulseek.
+
+Primary helper script:
+`skills/music/scripts/manual_import_music.py`
+
+The helper script:
+- copies the local source file/folder to VPS staging
+- calls `POST $MEDIA_API_URL/music/import`
+- can wait on `GET $MEDIA_API_URL/music/status/{download_id}`
+
+API contract:
+```
+POST $MEDIA_API_URL/music/import
+{
+  "source_path": "/mnt/cloud/gdrive/Media/Music/Downloads/manual_imports/<id>/<source>",
+  "language": "hindi",
+  "mode": "auto"          // "auto" | "album" | "track"
+}
+```
 
 ### Status
 ```
@@ -134,6 +159,21 @@ Ask language + pick in one message. No need for two separate prompts.
 ✅ Done — check Navidrome
 ```
 
+### When Sam gives an existing FLAC file/folder path
+
+1. Do not search Soulseek.
+2. Use the helper script:
+
+```bash
+python skills/music/scripts/manual_import_music.py <local_source_path> --language <english|hindi|punjabi> --api-url <MEDIA_API_URL> --api-key <MEDIA_API_KEY> --ssh-host root@69.62.73.167 --wait
+```
+
+3. Let `mode=auto` unless Sam explicitly wants single-track handling.
+4. Report whether the import was treated as:
+   - album
+   - track
+5. After success, tell Sam the files were enriched and moved into Navidrome’s music library.
+
 ### When status is `"stuck"`
 
 If `GET /music/status/{id}` returns `"stuck"`:
@@ -157,6 +197,8 @@ After download, the pipeline automatically:
 6. Renames folder: `Artist - Album (Year) [FLAC]` or `[FLAC 24bit]` for hi-res
 7. Moves to `/mnt/cloud/gdrive/Media/Music/{English|Hindi|Punjabi}/`
 8. Triggers Navidrome library scan
+
+The same enrichment path is also used for manual FLAC imports after staging to VPS.
 
 Sam does not need to do anything — the album appears in Navidrome automatically.
 

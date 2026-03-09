@@ -45,6 +45,19 @@
   - Radio phase 3 is intentionally deferred for later planning: DJ drops / liners / rotation rules
   - Detailed handoff/status doc: `docs/RADIO_AZURACAST_STATUS.md`
 
+**Project state note (2026-03-09):**
+- Music manual-import mode is implemented inside the existing FLAC music pipeline.
+  - New API endpoint: `POST /music/import`
+  - Existing status endpoint reused: `GET /music/status/{download_id}`
+  - Existing enrichment path reused: AcoustID → MusicBrainz → cover art → FLAC embed → Navidrome scan
+  - Existing skill updated with manual-import instructions
+  - Helper script added: `skills/music/scripts/manual_import_music.py`
+- Controlled subset validation passed on:
+  - clean album folder
+  - synthetic `CD1` / `CD2` multi-disc album folder
+  - standalone FLAC track
+- Full recursive import of `D:\Softwares_Apps\Entertainment\MUSIC\SoulSeek\complete` is intentionally pending until subset behavior is approved.
+
 ---
 
 ## 1. WHAT IS BUILT
@@ -67,6 +80,7 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - YouTube Opus Maven router (`/youtube/*`) with playlist-first search, background download worker, and Navidrome scan hook
 - Radio router (`/radio/*`) for AzuraCast now-playing and MP3 radio-library upload
 - Radio batch importer skill/script for recursive mixed-folder ingest into AzuraCast
+- Music manual-import helper script for local FLAC file/folder staging to VPS + pipeline trigger
 
 ---
 
@@ -544,6 +558,37 @@ Current validated behavior:
 - skips `.flac`
 - uploads everything through `POST /radio/upload`
 - validated successfully on `D:\Softwares_Apps\Entertainment\MUSIC`
+
+### `POST /music/import`
+**Auth required.** Imports a FLAC file or folder that already exists on the VPS filesystem.
+
+```json
+{
+  "source_path": "/mnt/cloud/gdrive/Media/Music/Downloads/manual_imports/<id>/<source>",
+  "language": "hindi",
+  "mode": "auto"
+}
+```
+
+Behavior:
+- `mode=auto` resolves to album for multi-file folders and track for a single FLAC
+- album imports reuse the existing album enrichment/delivery path
+- track imports reuse the existing single-track enrichment/delivery path
+- status is reported through `GET /music/status/{download_id}`
+
+### Music manual-import workflow
+For local FLAC files or folders that already exist on Sam's machine, use:
+
+`skills/music/scripts/manual_import_music.py`
+
+Current validated behavior:
+- stages a local FLAC file or folder to VPS-visible import storage
+- calls `POST /music/import`
+- waits on `GET /music/status/{download_id}` when requested
+- validated successfully on a controlled subset:
+  - clean album folder
+  - synthetic multi-disc `CD1` / `CD2` folder
+  - standalone FLAC track
 
 ---
 

@@ -17,6 +17,7 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -100,6 +101,12 @@ class MusicDownloadRequest(BaseModel):
     language: str          # "english" | "hindi" | "punjabi"
 
 
+class MusicImportRequest(BaseModel):
+    source_path: str
+    language: str
+    mode: str = "auto"   # "auto" | "album" | "track"
+
+
 # ---------------------------------------------------------------------------
 # Result parsing helpers
 # ---------------------------------------------------------------------------
@@ -141,6 +148,38 @@ def _remote_folder(filename: str) -> str:
     """Extract the remote directory from a Soulseek file path."""
     parts = filename.replace("\\", "/").rstrip("/").split("/")
     return "/".join(parts[:-1]) if len(parts) > 1 else ""
+
+
+def _is_disc_dir(name: str) -> bool:
+    return bool(re.fullmatch(r"(cd|disc|disk)\s*[_ -]*\d+", name.strip(), re.IGNORECASE))
+
+
+def _resolve_manual_import(source_path: str, requested_mode: str) -> tuple[str, Path, list[Path]]:
+    source = Path(source_path)
+    if not source.exists():
+        raise HTTPException(status_code=404, detail=f"Source path not found: {source_path}")
+
+    if source.is_file():
+        if source.suffix.lower() != ".flac":
+            raise HTTPException(status_code=400, detail="Manual music import only accepts .flac files or folders containing .flac files")
+        return "track", source, [source]
+
+    flac_files = sorted(source.rglob("*.flac"))
+    if not flac_files:
+        raise HTTPException(status_code=400, detail="No .flac files found under source_path")
+
+    if requested_mode == "track":
+        if len(flac_files) != 1:
+            raise HTTPException(status_code=400, detail="mode=track requires exactly one FLAC file")
+        return "track", flac_files[0], flac_files
+
+    if requested_mode == "album":
+        return "album", source, flac_files
+
+    has_disc_dirs = any(_is_disc_dir(p.name) for p in {f.parent for f in flac_files})
+    mode = "album" if len(flac_files) > 1 or has_disc_dirs else "track"
+    resolved_source = source if mode == "album" else flac_files[0]
+    return mode, resolved_source, flac_files
 
 
 def _parse_responses(responses: list) -> list[dict]:
@@ -599,6 +638,28 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     _downloads[download_id]["status"] = "done"
 
 
+async def _run_manual_import(download_id: str, source_path: str, language: str, mode: str) -> None:
+    _downloads[download_id]["status"] = "enriching"
+    try:
+        if mode == "track":
+            ok = await enrich_single_track(
+                flac_path=source_path,
+                language=language,
+            )
+        else:
+            ok = await enrich_and_deliver(
+                download_folder=source_path,
+                language=language,
+            )
+        _downloads[download_id]["status"] = "done" if ok else "failed"
+        if not ok:
+            _downloads[download_id]["message"] = "Manual import enrichment/delivery failed"
+    except Exception as exc:
+        logger.exception("Manual import failed for %s", source_path)
+        _downloads[download_id]["status"] = "failed"
+        _downloads[download_id]["message"] = str(exc)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -728,6 +789,41 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "quality": result["quality_label"],
             "language": req.language,
         }
+
+
+@router.post("/import")
+async def music_import(req: MusicImportRequest, _: str = Depends(_require_api_key)):
+    """Import a local FLAC file or folder that already exists on the VPS filesystem."""
+    mode = req.mode if req.mode in ("auto", "album", "track") else "auto"
+    resolved_mode, resolved_source, flac_files = _resolve_manual_import(req.source_path, mode)
+    download_id = str(uuid.uuid4())
+
+    _downloads[download_id] = {
+        "status": "starting",
+        "language": req.language.lower(),
+        "peer_username": "manual-import",
+        "mode": resolved_mode,
+        "source_path": str(resolved_source),
+        "files": [{"filename": str(p), "size": p.stat().st_size} for p in flac_files],
+    }
+
+    asyncio.create_task(
+        _run_manual_import(
+            download_id=download_id,
+            source_path=str(resolved_source),
+            language=req.language.lower(),
+            mode=resolved_mode,
+        )
+    )
+
+    return {
+        "success": True,
+        "download_id": download_id,
+        "mode": resolved_mode,
+        "files": len(flac_files),
+        "language": req.language.lower(),
+        "source_path": str(resolved_source),
+    }
 
 
 @router.get("/status/{download_id}")

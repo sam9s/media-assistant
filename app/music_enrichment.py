@@ -54,6 +54,62 @@ def _safe_name(name: str) -> str:
     return re.sub(r" {2,}", " ", name).strip()
 
 
+def _is_disc_dir(name: str) -> bool:
+    return bool(re.fullmatch(r"(cd|disc|disk)\s*[_ -]*\d+", name.strip(), re.IGNORECASE))
+
+
+def _album_root_from_flacs(download_root: Path, flac_files: list[Path]) -> Path:
+    if not flac_files:
+        return download_root
+    common = Path(os.path.commonpath([str(f.parent) for f in flac_files]))
+    if _is_disc_dir(common.name) and common.parent != common:
+        return common.parent
+    if download_root == common or download_root in common.parents:
+        return common
+    return download_root
+
+
+def _read_album_hints(flac_path: Path) -> dict:
+    try:
+        audio = FLAC(str(flac_path))
+    except Exception:
+        return {}
+
+    def _first(*keys: str) -> str:
+        for key in keys:
+            value = audio.get(key)
+            if value:
+                return str(value[0]).strip()
+        return ""
+
+    date = _first("date", "originaldate", "year")
+    year_match = re.search(r"\b(19|20)\d{2}\b", date)
+    return {
+        "artist": _first("albumartist", "artist"),
+        "album": _first("album"),
+        "year": year_match.group(0) if year_match else "",
+    }
+
+
+def _read_track_hints(flac_path: Path) -> dict:
+    try:
+        audio = FLAC(str(flac_path))
+    except Exception:
+        return {}
+
+    def _first(*keys: str) -> str:
+        for key in keys:
+            value = audio.get(key)
+            if value:
+                return str(value[0]).strip()
+        return ""
+
+    return {
+        "artist": _first("artist", "albumartist"),
+        "title": _first("title"),
+    }
+
+
 async def _fetch_bytes(url: str) -> Optional[bytes]:
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -222,15 +278,18 @@ async def enrich_and_deliver(
         logger.warning("Enrichment: no FLAC files found in %s", download_folder)
         return False
 
+    album_root = _album_root_from_flacs(folder, flac_files)
+    tag_hints = _read_album_hints(flac_files[0])
+
     # --- Step 1+2: Fingerprint first FLAC → metadata ---
     meta = None
     recording_id = await _fingerprint_to_mbid(str(flac_files[0]))
     if recording_id:
         meta = await asyncio.to_thread(_mb_release_from_recording, recording_id)
 
-    artist = (meta or {}).get("artist") or artist_hint or "Unknown Artist"
-    album  = (meta or {}).get("album")  or album_hint  or folder.name
-    year   = (meta or {}).get("year")   or ""
+    artist = (meta or {}).get("artist") or artist_hint or tag_hints.get("artist") or "Unknown Artist"
+    album  = (meta or {}).get("album")  or album_hint  or tag_hints.get("album") or album_root.name
+    year   = (meta or {}).get("year")   or tag_hints.get("year") or ""
     rg_id  = (meta or {}).get("release_group_id", "")
 
     # Detect hi-res (any file > 16-bit)
@@ -254,7 +313,7 @@ async def enrich_and_deliver(
         for f in flac_files:
             await asyncio.to_thread(_embed_cover_into_flac, str(f), cover_bytes)
 
-    art_dir = flac_files[0].parent  # save art alongside the FLAC files
+    art_dir = album_root
     if cover_bytes:
         (art_dir / "folder.jpg").write_bytes(cover_bytes)
     if cd_bytes:
@@ -265,24 +324,25 @@ async def enrich_and_deliver(
     # --- Step 7: Rename the folder ---
     year_part = f" ({year})" if year else ""
     folder_name = _safe_name(f"{artist} - {album}{year_part} [{quality_tag}]")
-    renamed = folder.parent / folder_name
-    if folder != renamed:
+    renamed = album_root.parent / folder_name
+    delivery_root = album_root
+    if album_root != renamed:
         try:
-            folder.rename(renamed)
-            folder = renamed
+            album_root.rename(renamed)
+            delivery_root = renamed
         except Exception as e:
             logger.warning("Folder rename failed: %s", e)
 
     # --- Step 8: Move to destination ---
-    dest = Path(dest_root) / folder.name
+    dest = Path(dest_root) / delivery_root.name
     try:
         if dest.exists():
             logger.warning("Destination already exists, skipping move: %s", dest)
         else:
-            shutil.move(str(folder), str(dest))
+            shutil.move(str(delivery_root), str(dest))
             logger.info("Enrichment delivered: %s", dest)
     except Exception as e:
-        logger.error("Enrichment move failed %s → %s: %s", folder, dest, e)
+        logger.error("Enrichment move failed %s → %s: %s", delivery_root, dest, e)
         return False
 
     # --- Step 9: Navidrome scan ---
@@ -365,8 +425,10 @@ async def enrich_single_track(
     if recording_id:
         meta = await asyncio.to_thread(_mb_recording_meta, recording_id)
 
-    artist = (meta or {}).get("artist") or artist_hint or "Unknown Artist"
-    title  = (meta or {}).get("title")  or title_hint  or file.stem
+    tag_hints = _read_track_hints(file)
+
+    artist = (meta or {}).get("artist") or artist_hint or tag_hints.get("artist") or "Unknown Artist"
+    title  = (meta or {}).get("title")  or title_hint  or tag_hints.get("title") or file.stem
 
     logger.info("Track enrichment metadata: artist=%r title=%r", artist, title)
 
