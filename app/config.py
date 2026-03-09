@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     AZURACAST_STATION_ID: int = 2
     AZURACAST_STATION_SHORTCODE: str = "sam9s.radio"
     RADIO_LIBRARY_PATH: str = "/mnt/cloud/gdrive/Media/Radio"
+    RADIO_UPLOAD_SUBDIR: str = "Hindi"
 
     # YouTube Opus Maven — comma-separated public playlist URLs to search first.
     # Leave blank to skip playlist search and go straight to YouTube search.

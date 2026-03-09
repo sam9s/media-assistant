@@ -92,6 +92,11 @@ async def _find_station_files_by_path(client: httpx.AsyncClient, path: str) -> l
     ]
 
 
+def _target_relative_path(filename: str) -> str:
+    subdir = settings.RADIO_UPLOAD_SUBDIR.strip().strip("/")
+    return f"{subdir}/{filename}" if subdir else filename
+
+
 @router.get("/nowplaying")
 async def radio_nowplaying(_: str = Depends(_require_api_key)):
     url = f"{settings.AZURACAST_URL.rstrip('/')}/api/nowplaying"
@@ -151,6 +156,7 @@ async def radio_upload(
         raise HTTPException(status_code=400, detail="Only MP3 uploads are supported for radio")
 
     dest_name = _safe_mp3_name(file.filename)
+    target_path = _target_relative_path(dest_name)
     replace_existing = _coerce_bool(replace)
 
     try:
@@ -163,12 +169,12 @@ async def radio_upload(
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            existing = await _find_station_files_by_path(client, dest_name)
+            existing = await _find_station_files_by_path(client, target_path)
 
             if existing and not replace_existing:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"File already exists in AzuraCast media library: {dest_name}",
+                    detail=f"File already exists in AzuraCast media library: {target_path}",
                 )
 
             if existing and replace_existing:
@@ -182,13 +188,14 @@ async def radio_upload(
             upload_resp = await client.post(
                 _station_upload_url(),
                 headers=_azuracast_headers(),
+                data={"currentDirectory": settings.RADIO_UPLOAD_SUBDIR},
                 files={"file": (dest_name, file_bytes, "audio/mpeg")},
             )
             upload_resp.raise_for_status()
 
             created: list[dict] = []
             for _ in range(10):
-                created = await _find_station_files_by_path(client, dest_name)
+                created = await _find_station_files_by_path(client, target_path)
                 if created:
                     break
                 await asyncio.sleep(1)
@@ -213,7 +220,7 @@ async def radio_upload(
     size_bytes = len(file_bytes)
     return {
         "success": True,
-        "saved_to": f"{settings.RADIO_LIBRARY_PATH.rstrip('/')}/{dest_name}",
+        "saved_to": f"{settings.RADIO_LIBRARY_PATH.rstrip('/')}/{target_path}",
         "filename": dest_name,
         "size_mb": round(size_bytes / (1024 * 1024), 2),
         "azuracast_file_id": created_record.get("id"),
