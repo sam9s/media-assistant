@@ -1,4 +1,5 @@
 """AzuraCast radio helpers."""
+import asyncio
 import re
 from pathlib import Path
 
@@ -27,6 +28,14 @@ def _safe_mp3_name(filename: str) -> str:
     if not stem:
         stem = "radio_upload"
     return f"{stem}.mp3"
+
+
+def _normalize_station_path(path: str) -> str:
+    base = Path(path or "").name.lower()
+    stem = Path(base).stem
+    suffix = Path(base).suffix.lower()
+    stem = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+    return f"{stem}{suffix}"
 
 
 def _pick_station(payload: list[dict]) -> dict | None:
@@ -74,8 +83,13 @@ async def _list_station_files(client: httpx.AsyncClient) -> list[dict]:
 
 
 async def _find_station_files_by_path(client: httpx.AsyncClient, path: str) -> list[dict]:
+    wanted = _normalize_station_path(path)
     files = await _list_station_files(client)
-    return [item for item in files if (item.get("path") or "").strip() == path]
+    return [
+        item
+        for item in files
+        if _normalize_station_path(item.get("path") or "") == wanted
+    ]
 
 
 @router.get("/nowplaying")
@@ -172,7 +186,12 @@ async def radio_upload(
             )
             upload_resp.raise_for_status()
 
-            created = await _find_station_files_by_path(client, dest_name)
+            created: list[dict] = []
+            for _ in range(10):
+                created = await _find_station_files_by_path(client, dest_name)
+                if created:
+                    break
+                await asyncio.sleep(1)
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
