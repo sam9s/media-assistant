@@ -53,6 +53,9 @@
   - Duplicate protection added for manual imports:
     - album imports skip when the same album is already present in the target music library
     - single-track imports skip when the same track already exists in the destination
+  - Upgrade mode added for manual imports:
+    - `replace_existing=true` replaces older raw library copies with the newly enriched import
+    - replaced copies are moved to `/mnt/cloud/gdrive/Media/Music/Downloads/manual_import_replaced/`
   - Existing skill updated with manual-import instructions
   - Helper script added: `skills/music/scripts/manual_import_music.py`
 - Controlled subset validation passed on:

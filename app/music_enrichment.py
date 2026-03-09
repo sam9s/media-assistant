@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +38,7 @@ logger = logging.getLogger("uvicorn.error")
 musicbrainzngs.set_useragent("SamAssist", "3.0", "sam@sam9scloud.in")
 
 MUSIC_ROOT = "/mnt/cloud/gdrive/Media/Music"
+MANUAL_IMPORT_BACKUP_ROOT = f"{MUSIC_ROOT}/Downloads/manual_import_replaced"
 LANGUAGE_DIRS = {
     "english": f"{MUSIC_ROOT}/English",
     "hindi":   f"{MUSIC_ROOT}/Hindi",
@@ -52,6 +54,19 @@ def _safe_name(name: str) -> str:
     """Strip characters that are invalid in Linux filenames."""
     name = re.sub(r'[<>:"/\\?*\x00-\x1f|]', "", name)
     return re.sub(r" {2,}", " ", name).strip()
+
+
+def _backup_existing_path(path: Path) -> Path:
+    backup_root = Path(MANUAL_IMPORT_BACKUP_ROOT)
+    backup_root.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    target = backup_root / f"{timestamp}-{path.name}"
+    counter = 1
+    while target.exists():
+        target = backup_root / f"{timestamp}-{counter}-{path.name}"
+        counter += 1
+    shutil.move(str(path), str(target))
+    return target
 
 
 def _norm_text(value: str) -> str:
@@ -303,6 +318,7 @@ async def enrich_and_deliver(
     language: str,
     artist_hint: str = "",
     album_hint: str = "",
+    replace_existing: bool = False,
 ) -> dict:
     """
     Full enrichment pipeline. Runs as a background task.
@@ -348,7 +364,11 @@ async def enrich_and_deliver(
 
     existing_dir = _find_existing_album_dir(Path(dest_root), artist, album)
     navidrome_exists = await search_album(artist, album)
-    if existing_dir or navidrome_exists:
+    year_part = f" ({year})" if year else ""
+    folder_name = _safe_name(f"{artist} - {album}{year_part} [{quality_tag}]")
+    dest = Path(dest_root) / folder_name
+
+    if (existing_dir or navidrome_exists) and not replace_existing:
         message = f"Album already exists: {existing_dir or f'Navidrome:{artist} - {album}'}"
         logger.info("Album duplicate detected, skipping manual delivery: %s", message)
         return {
@@ -356,6 +376,18 @@ async def enrich_and_deliver(
             "duplicate": True,
             "message": message,
             "destination": str(existing_dir) if existing_dir else "",
+        }
+
+    if replace_existing and existing_dir and existing_dir != dest and dest.exists():
+        backup = _backup_existing_path(existing_dir)
+        message = f"Removed older duplicate {existing_dir}; enriched copy already exists at {dest}"
+        logger.info("Album upgrade cleanup complete: backup=%s", backup)
+        return {
+            "success": True,
+            "duplicate": False,
+            "message": message,
+            "destination": str(dest),
+            "backup": str(backup),
         }
 
     # --- Step 3+4: Fetch art ---
@@ -382,8 +414,6 @@ async def enrich_and_deliver(
         (art_dir / "logo.png").write_bytes(logo_bytes)
 
     # --- Step 7: Rename the folder ---
-    year_part = f" ({year})" if year else ""
-    folder_name = _safe_name(f"{artist} - {album}{year_part} [{quality_tag}]")
     renamed = album_root.parent / folder_name
     delivery_root = album_root
     if album_root != renamed:
@@ -394,8 +424,15 @@ async def enrich_and_deliver(
             logger.warning("Folder rename failed: %s", e)
 
     # --- Step 8: Move to destination ---
-    dest = Path(dest_root) / delivery_root.name
     try:
+        if replace_existing and existing_dir and existing_dir.exists() and existing_dir != dest:
+            backup = _backup_existing_path(existing_dir)
+            logger.info("Album upgrade backed up existing folder %s -> %s", existing_dir, backup)
+
+        if replace_existing and dest.exists():
+            backup = _backup_existing_path(dest)
+            logger.info("Album upgrade backed up destination folder %s -> %s", dest, backup)
+
         if dest.exists():
             logger.warning("Destination already exists, skipping move: %s", dest)
             return {
@@ -404,9 +441,9 @@ async def enrich_and_deliver(
                 "message": f"Destination already exists: {dest}",
                 "destination": str(dest),
             }
-        else:
-            shutil.move(str(delivery_root), str(dest))
-            logger.info("Enrichment delivered: %s", dest)
+
+        shutil.move(str(delivery_root), str(dest))
+        logger.info("Enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Enrichment move failed %s → %s: %s", delivery_root, dest, e)
         return {"success": False, "message": f"move failed: {e}"}
@@ -467,6 +504,7 @@ async def enrich_single_track(
     language: str,
     title_hint: str = "",
     artist_hint: str = "",
+    replace_existing: bool = False,
 ) -> dict:
     """
     Enrich and deliver a single FLAC track to the Misc/ folder.
@@ -499,7 +537,7 @@ async def enrich_single_track(
     logger.info("Track enrichment metadata: artist=%r title=%r", artist, title)
 
     existing_file = _single_track_exists(Path(dest_root), artist, title, language)
-    if existing_file:
+    if existing_file and not replace_existing:
         message = f"Track already exists: {existing_file}"
         logger.info("Track duplicate detected, skipping manual delivery: %s", message)
         return {
@@ -541,6 +579,14 @@ async def enrich_single_track(
     # --- Step 7: Move to destination ---
     dest = dest_dir / file.name
     try:
+        if replace_existing and existing_file and existing_file.exists() and existing_file != dest:
+            backup = _backup_existing_path(existing_file)
+            logger.info("Track upgrade backed up existing file %s -> %s", existing_file, backup)
+
+        if replace_existing and dest.exists():
+            backup = _backup_existing_path(dest)
+            logger.info("Track upgrade backed up destination file %s -> %s", dest, backup)
+
         if dest.exists():
             logger.warning("Destination already exists, skipping: %s", dest)
             return {
@@ -549,9 +595,9 @@ async def enrich_single_track(
                 "message": f"Destination already exists: {dest}",
                 "destination": str(dest),
             }
-        else:
-            shutil.move(str(file), str(dest))
-            logger.info("Track enrichment delivered: %s", dest)
+
+        shutil.move(str(file), str(dest))
+        logger.info("Track enrichment delivered: %s", dest)
     except Exception as e:
         logger.error("Track move failed %s → %s: %s", file, dest, e)
         return {"success": False, "message": f"move failed: {e}"}

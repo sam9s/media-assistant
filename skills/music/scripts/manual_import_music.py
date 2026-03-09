@@ -50,6 +50,7 @@ def main() -> int:
     parser.add_argument("--ssh-host", required=True, help="Example: root@69.62.73.167")
     parser.add_argument("--remote-staging-root", default="/mnt/cloud/gdrive/Media/Music/Downloads/manual_imports")
     parser.add_argument("--mode", default="auto", choices=["auto", "album", "track"])
+    parser.add_argument("--replace-existing", action="store_true", help="Replace existing library copy instead of skipping duplicates")
     parser.add_argument("--wait", action="store_true", help="Poll status until done/failed")
     args = parser.parse_args()
 
@@ -74,6 +75,7 @@ def main() -> int:
             "source_path": remote_target,
             "language": args.language,
             "mode": args.mode,
+            "replace_existing": args.replace_existing,
         },
     )
 

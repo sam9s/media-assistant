@@ -76,6 +76,7 @@ The helper script:
 - calls `POST $MEDIA_API_URL/music/import`
 - can wait on `GET $MEDIA_API_URL/music/status/{download_id}`
 - when used with `--wait`, it also cleans up the remote staging folder after the import finishes
+- supports `--replace-existing` for deliberate upgrade/cleanup of older raw library copies
 
 API contract:
 ```
@@ -83,7 +84,8 @@ POST $MEDIA_API_URL/music/import
 {
   "source_path": "/mnt/cloud/gdrive/Media/Music/Downloads/manual_imports/<id>/<source>",
   "language": "hindi",
-  "mode": "auto"          // "auto" | "album" | "track"
+  "mode": "auto",         // "auto" | "album" | "track"
+  "replace_existing": false
 }
 ```
 
@@ -175,6 +177,19 @@ python skills/music/scripts/manual_import_music.py <local_source_path> --languag
    - track
    - duplicate skipped
 5. After success, tell Sam the files were enriched and moved into Navidrome’s music library.
+
+### When Sam wants to upgrade an older raw album already in the library
+
+Use:
+
+```bash
+python skills/music/scripts/manual_import_music.py <local_source_path> --language <english|hindi|punjabi> --api-url <MEDIA_API_URL> --api-key <MEDIA_API_KEY> --ssh-host root@69.62.73.167 --replace-existing --wait
+```
+
+Behavior:
+- if an older raw album/track already exists, the existing library copy is moved to the manual-import backup area
+- the newly enriched import replaces it
+- if the enriched destination already exists already, the older raw duplicate is removed from the library and the enriched copy is kept
 
 ### When status is `"stuck"`
 

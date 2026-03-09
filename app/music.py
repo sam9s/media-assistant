@@ -106,6 +106,7 @@ class MusicImportRequest(BaseModel):
     source_path: str
     language: str
     mode: str = "auto"   # "auto" | "album" | "track"
+    replace_existing: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -643,18 +644,20 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     _downloads[download_id]["status"] = "done"
 
 
-async def _run_manual_import(download_id: str, source_path: str, language: str, mode: str) -> None:
+async def _run_manual_import(download_id: str, source_path: str, language: str, mode: str, replace_existing: bool = False) -> None:
     _downloads[download_id]["status"] = "enriching"
     try:
         if mode == "track":
             result = await enrich_single_track(
                 flac_path=source_path,
                 language=language,
+                replace_existing=replace_existing,
             )
         else:
             result = await enrich_and_deliver(
                 download_folder=source_path,
                 language=language,
+                replace_existing=replace_existing,
             )
         _downloads[download_id]["status"] = "done" if result.get("success") else "failed"
         if result.get("message"):
@@ -825,6 +828,7 @@ async def music_import(req: MusicImportRequest, _: str = Depends(_require_api_ke
         "mode": resolved_mode,
         "source_path": str(resolved_source),
         "files": [{"filename": str(p), "size": p.stat().st_size} for p in flac_files],
+        "replace_existing": req.replace_existing,
     }
 
     asyncio.create_task(
@@ -833,6 +837,7 @@ async def music_import(req: MusicImportRequest, _: str = Depends(_require_api_ke
             source_path=str(resolved_source),
             language=req.language.lower(),
             mode=resolved_mode,
+            replace_existing=req.replace_existing,
         )
     )
 
@@ -843,6 +848,7 @@ async def music_import(req: MusicImportRequest, _: str = Depends(_require_api_ke
         "files": len(flac_files),
         "language": req.language.lower(),
         "source_path": str(resolved_source),
+        "replace_existing": req.replace_existing,
     }
 
 
