@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     RADIO_LIBRARY_PATH: str = "/mnt/cloud/gdrive/Media/Radio"
     RADIO_UPLOAD_SUBDIR: str = "Hindi"
 
+    # Immich — basic photo management
+    IMMICH_URL: str = "https://photos.sam9scloud.in"
+    IMMICH_API_KEY: str = ""
+
     # YouTube Opus Maven — comma-separated public playlist URLs to search first.
     # Leave blank to skip playlist search and go straight to YouTube search.
     YOUTUBE_PLAYLIST_URLS: str = ""

@@ -98,6 +98,7 @@ Located in `openclaw/` and `skills/`:
 | `openclaw/HEARTBEAT.md` | Proactive monitoring schedule and alert rules |
 | `skills/media-assistant/SKILL.md` | Full API usage guide for media operations |
 | `skills/media-manager/SKILL.md` | Top-level orchestration guide for Raven as Sam's media server manager |
+| `skills/photos/SKILL.md` | Basic Immich photo management: upload, albums, search, download |
 | `skills/vps-health/SKILL.md` | Full VPS health monitoring — all 34 containers + system resources |
 
 ---
@@ -106,7 +107,7 @@ Located in `openclaw/` and `skills/`:
 
 | Phase | What | Status |
 |---|---|---|
-| Phase 2 | Immich photo management — `GET /photos/search` | Planned |
+| Phase 2 | Immich photo management — `/photos/*` basic upload/album/search/download | Implemented in code, pending live API-key validation |
 | Phase 3 | AzuraCast radio control — `GET /radio/nowplaying`, `POST /radio/upload`, recursive radio batch importer | Implemented |
 | Phase 4 | Kavita / Audiobookshelf — book and audiobook search | Partially implemented |
 | Phase 5 | Recommendation engine — "suggest something like Blade Runner" | Planned |

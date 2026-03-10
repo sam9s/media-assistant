@@ -74,6 +74,26 @@
 - New orchestration skill added: `skills/media-manager/SKILL.md`
   - Purpose: let Raven act as Sam's top-level media server manager by choosing the correct existing pipeline, preferring targeted operations, verifying outcomes, and avoiding unnecessary reruns.
 
+**Project state note (2026-03-10):**
+- Basic Immich photo-management integration is implemented in code.
+  - New router: `/photos/*`
+  - Supported operations:
+    - upload asset
+    - list albums
+    - create album
+    - rename/update album
+    - delete album
+    - add assets to album
+    - search assets by filename
+    - update simple asset fields
+    - download original asset bytes
+  - New skill added: `skills/photos/SKILL.md`
+  - Runtime validation is pending an Immich API key.
+  - Current VPS ops issue:
+    - `immich-server` is healthy
+    - `immich-microservices` is in a restart loop with `/bin/bash: line 1: start-microservices: command not found`
+    - this looks like a deployment command/config issue rather than an application-data issue
+
 ---
 
 ## 1. WHAT IS BUILT
@@ -85,7 +105,6 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - Triggering Jellyfin library refresh so content appears immediately
 
 **What was NOT built (future phases):**
-- Immich photo management
 - Audiobookshelf book search
 - Recommendation engine
 
@@ -97,6 +116,7 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - Radio router (`/radio/*`) for AzuraCast now-playing and MP3 radio-library upload
 - Radio batch importer skill/script for recursive mixed-folder ingest into AzuraCast
 - Music manual-import helper script for local FLAC file/folder staging to VPS + pipeline trigger
+- Basic Immich photo-management router/skill for upload, albums, search, and download
 
 ---
 
@@ -147,8 +167,10 @@ media_assistant/
 │   ├── tmdb.py          # TMDB metadata client
 │   ├── qbittorrent.py   # qBittorrent API client (add torrent, get tags, active downloads)
 │   ├── jellyfin.py      # Jellyfin API client (search, refresh_library)
+│   ├── immich.py        # Immich API client
 │   ├── kavita.py        # Kavita API client (login, search, get_library_id, scan_library)
 │   ├── librarian.py     # Librarian router — book search, download, EPUB validation, Kavita scan
+│   ├── photos.py        # Photos router — Immich upload, albums, search, download
 │   ├── radio.py         # Radio router — AzuraCast now-playing + MP3 upload to radio library
 │   └── sources/
 │       ├── gutendex.py          # Gutenberg/Gutendex search client
@@ -160,6 +182,8 @@ media_assistant/
 │   │   └── SKILL.md     # Raven skill — movie/TV/music torrent pipeline
 │   ├── media-manager/
 │   │   └── SKILL.md     # Raven orchestration skill — top-level media server manager
+│   ├── photos/
+│   │   └── SKILL.md     # Raven skill — basic Immich photo management
 │   ├── radio/
 │   │   └── SKILL.md     # Raven skill — AzuraCast radio upload + now-playing
 │   ├── radio-audio-import/
