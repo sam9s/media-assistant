@@ -65,7 +65,14 @@
   - clean album folder
   - synthetic `CD1` / `CD2` multi-disc album folder
   - standalone FLAC track
-- Full recursive import of `D:\Softwares_Apps\Entertainment\MUSIC\SoulSeek\complete` is intentionally pending until subset behavior is approved.
+- Full recursive import of `D:\Softwares_Apps\Entertainment\MUSIC\SoulSeek\complete` was executed in staged form.
+  - Main batch imported the clean albums/tracks that could be classified safely.
+  - Targeted leftovers pass imported the previously skipped `CD1` / `CD2` / `Disc 1` buckets as single tracks.
+  - Current remaining source-vs-library FLAC gap is small and appears to be duplicate suppression/consolidation rather than unhandled leftovers.
+  - Repeated album tiles seen in Navidrome are currently a metadata-normalization issue, not an unfinished import issue.
+  - Library reorganization/album consolidation is intentionally deferred.
+- New orchestration skill added: `skills/media-manager/SKILL.md`
+  - Purpose: let Raven act as Sam's top-level media server manager by choosing the correct existing pipeline, preferring targeted operations, verifying outcomes, and avoiding unnecessary reruns.
 
 ---
 
@@ -151,6 +158,8 @@ media_assistant/
 ├── skills/
 │   ├── media-assistant/
 │   │   └── SKILL.md     # Raven skill — movie/TV/music torrent pipeline
+│   ├── media-manager/
+│   │   └── SKILL.md     # Raven orchestration skill — top-level media server manager
 │   ├── radio/
 │   │   └── SKILL.md     # Raven skill — AzuraCast radio upload + now-playing
 │   ├── radio-audio-import/

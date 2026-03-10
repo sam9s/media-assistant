@@ -97,6 +97,7 @@ Located in `openclaw/` and `skills/`:
 | `openclaw/AGENTS.md` | Skill routing — which intent goes to which skill |
 | `openclaw/HEARTBEAT.md` | Proactive monitoring schedule and alert rules |
 | `skills/media-assistant/SKILL.md` | Full API usage guide for media operations |
+| `skills/media-manager/SKILL.md` | Top-level orchestration guide for Raven as Sam's media server manager |
 | `skills/vps-health/SKILL.md` | Full VPS health monitoring — all 34 containers + system resources |
 
 ---
