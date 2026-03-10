@@ -26,6 +26,7 @@ from app.librarian import router as librarian_router
 from app.music import router as music_router
 from app.photos import router as photos_router
 from app.radio import router as radio_router
+from app.recommendations import router as recommendations_router
 from app.youtube import router as youtube_router
 from app.opensubtitles import OpenSubtitlesClient
 from app.privatehd import search_privatehd
@@ -38,6 +39,7 @@ app.include_router(librarian_router)
 app.include_router(music_router)
 app.include_router(photos_router)
 app.include_router(radio_router)
+app.include_router(recommendations_router)
 app.include_router(youtube_router)
 
 

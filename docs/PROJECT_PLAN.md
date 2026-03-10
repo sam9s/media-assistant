@@ -101,6 +101,29 @@
     - `immich-microservices` is in a restart loop with `/bin/bash: line 1: start-microservices: command not found`
     - this looks like a deployment command/config issue rather than an application-data issue
 
+**Project state note (2026-03-10, Recommendation Engine Phase 1):**
+- Recommendation engine phase 1 is now implemented inside `sam-media-api`.
+  - New router: `/recommendations/*`
+  - Storage: existing `media-assistant-postgres` in schema `reco`
+  - Ingestion sources: Jellyfin, Navidrome, Kavita
+  - Source truth access: direct read-only SQLite mounts from the service databases
+  - Phase 1 behavior: suggest-only, weekly + on-demand, no auto-downloads
+  - New skill added: `skills/recommendations/SKILL.md`
+  - New helper scripts added for host scheduling:
+    - `scripts/recommendation_ingest.py`
+    - `scripts/recommendation_generate.py`
+    - `scripts/recommendation_ingest.sh`
+    - `scripts/recommendation_generate.sh`
+  - LLM theme synthesis is optional and only activates when `OPENROUTER_API_KEY` is configured
+  - External candidate enrichment is optional and currently uses:
+    - TMDB for movies / screen titles
+    - Last.fm for music
+    - Open Library for books
+  - Telegram delivery is still deferred until OpenClaw is deployed on VPS
+  - VPS cron is now installed with `CRON_TZ=Asia/Kolkata`:
+    - daily ingest at `03:30`
+    - weekly digest generation every Sunday at `09:00`
+
 ---
 
 ## 1. WHAT IS BUILT
@@ -112,8 +135,8 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - Triggering Jellyfin library refresh so content appears immediately
 
 **What was NOT built (future phases):**
-- Audiobookshelf book search
-- Recommendation engine
+- Audiobookshelf book search / ingestion
+- Recommendation engine phase 2+ (vector search, Audiobookshelf ingestion, automatic Telegram delivery, auto-acquisition)
 
 **What has since been added beyond the original scope:**
 - Full Librarian/Kavita pipeline: search (SE + Gutenberg + Archive.org + Anna's Archive), EPUB download, structural validation, Kavita scan — confirmed end-to-end (2026-03-04)
@@ -124,6 +147,7 @@ A lean FastAPI service (`sam-media-api`) that gives Raven (the AI assistant) ful
 - Radio batch importer skill/script for recursive mixed-folder ingest into AzuraCast
 - Music manual-import helper script for local FLAC file/folder staging to VPS + pipeline trigger
 - Basic Immich photo-management router/skill for upload, albums, search, and download
+- Recommendation router (`/recommendations/*`) for ingestion, weekly digest generation, on-demand queries, and digest history
 
 ---
 
@@ -179,6 +203,10 @@ media_assistant/
 │   ├── librarian.py     # Librarian router — book search, download, EPUB validation, Kavita scan
 │   ├── photos.py        # Photos router — Immich upload, albums, search, download
 │   ├── radio.py         # Radio router — AzuraCast now-playing + MP3 upload to radio library
+│   ├── recommendation_db.py      # Postgres schema + persistence for recommendation engine
+│   ├── recommendation_engine.py  # ingestion, scoring, digest generation, query logic
+│   ├── recommendation_sources.py # direct DB readers for Jellyfin/Navidrome/Kavita
+│   ├── recommendations.py        # Recommendation router — /recommendations/*
 │   └── sources/
 │       ├── gutendex.py          # Gutenberg/Gutendex search client
 │       ├── standard_ebooks.py   # Standard Ebooks search client
@@ -191,6 +219,8 @@ media_assistant/
 │   │   └── SKILL.md     # Raven orchestration skill — top-level media server manager
 │   ├── photos/
 │   │   └── SKILL.md     # Raven skill — basic Immich photo management
+│   ├── recommendations/
+│   │   └── SKILL.md     # Raven skill — weekly digest and on-demand discovery
 │   ├── radio/
 │   │   └── SKILL.md     # Raven skill — AzuraCast radio upload + now-playing
 │   ├── radio-audio-import/
@@ -207,6 +237,8 @@ media_assistant/
 │   └── DR_RUNBOOK.md                # Backup + restore procedure
 ├── scripts/
 │   └── backup_config_bundle.sh      # Encrypted config-only backup script
+│   ├── recommendation_ingest.py     # Host-scheduler helper — trigger daily ingestion
+│   └── recommendation_generate.py   # Host-scheduler helper — trigger weekly generation
 ├── docker-compose.yml   # sam-media-api + jackett + flaresolverr containers
 ├── Dockerfile
 ├── requirements.txt

@@ -86,6 +86,22 @@ class Settings(BaseSettings):
     IMMICH_URL: str = "https://photos.sam9scloud.in"
     IMMICH_API_KEY: str = ""
 
+    # Recommendation engine
+    RECOMMENDATIONS_ENABLED: bool = True
+    RECOMMENDATIONS_DATABASE_URL: str = "postgresql://media_assistant:mediaassistant123@media-assistant-postgres:5432/media_assistant"
+    RECOMMENDATIONS_SOURCE_JELLYFIN_DB: str = "/sources/jellyfin/library.db"
+    RECOMMENDATIONS_SOURCE_NAVIDROME_DB: str = "/sources/navidrome/navidrome.db"
+    RECOMMENDATIONS_SOURCE_KAVITA_DB: str = "/sources/kavita/kavita.db"
+    RECOMMENDATIONS_DEFAULT_LOOKBACK_DAYS: int = 7
+    RECOMMENDATIONS_INGEST_WINDOW_DAYS: int = 30
+    RECOMMENDATIONS_DAILY_INGEST_TIME: str = "03:30"
+    RECOMMENDATIONS_WEEKLY_DIGEST_DAY: str = "sunday"
+    RECOMMENDATIONS_WEEKLY_DIGEST_TIME: str = "09:00"
+    LASTFM_API_KEY: str = ""
+    OPEN_LIBRARY_BASE_URL: str = "https://openlibrary.org"
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+
     # YouTube Opus Maven — comma-separated public playlist URLs to search first.
     # Leave blank to skip playlist search and go straight to YouTube search.
     YOUTUBE_PLAYLIST_URLS: str = ""

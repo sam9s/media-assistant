@@ -25,6 +25,9 @@ This file defines which skill handles which type of user request.
 | Download a magazine | `librarian` |
 | Check if a book is in Kavita library | `librarian` |
 | Ask about Kavita or book library | `librarian` |
+| Ask for recommendations or weekly discovery | `recommendations` |
+| Ask for cross-media suggestions | `recommendations` |
+| Ask what to watch / read / hear next | `recommendations` |
 | Check VPS health or container status | `vps-health` |
 | Report system resource usage | `vps-health` |
 | Alert about a failed or crashed container | `vps-health` |
@@ -36,7 +39,7 @@ All requests that don't match a specific skill are handled by the base model dir
 ## Notes
 
 - When in doubt about intent, ask the user one short clarifying question before routing.
-- Books, comics, and magazines → `librarian` skill (Kavita pipeline)
-- Movies and TV shows → `media-assistant` skill (qBittorrent + Jellyfin pipeline)
-- Music albums (FLAC) → `music` skill (Soulseek/slskd + Navidrome pipeline)
-
+- Books, comics, and magazines -> `librarian` skill (Kavita pipeline)
+- Movies and TV shows -> `media-assistant` skill (qBittorrent + Jellyfin pipeline)
+- Music albums (FLAC) -> `music` skill (Soulseek/slskd + Navidrome pipeline)
+- Recommendations and discovery -> `recommendations` skill

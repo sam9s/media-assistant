@@ -11,6 +11,9 @@ services:
       - /srv/downloads:/downloads                           # shared with qBittorrent — rename files here
       - /mnt/cloud/gdrive/Media:/mnt/cloud/gdrive/Media    # rclone FUSE mount = gdrive = Jellyfin library
       - ./youtube_cookies.txt:/app/youtube_cookies.txt     # YouTube Premium cookies (export from Chrome)
+      - /opt/dokploy/volumes/jellyfin/config/data:/sources/jellyfin:ro
+      - /opt/dokploy/volumes/navidrome/data:/sources/navidrome:ro
+      - /opt/dokploy/volumes/kavita/config:/sources/kavita:ro
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -18,6 +21,7 @@ services:
       - jackett
     networks:
       - internal
+      - reco-db
 
   jackett:
     image: lscr.io/linuxserver/jackett:latest
@@ -64,6 +68,9 @@ services:
 networks:
   internal:
     driver: bridge
+  reco-db:
+    external: true
+    name: media-assistant_media-assistant
 
 volumes:
   jackett_config:

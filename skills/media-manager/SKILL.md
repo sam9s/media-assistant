@@ -1,6 +1,6 @@
 ---
 name: media-manager
-description: Top-level orchestration skill for Raven to act as Sam's comprehensive media server manager. Use when Sam asks for end-to-end media operations, cross-pipeline coordination, library verification, targeted cleanup, or when Raven needs to choose between movie, music, YouTube, radio, librarian, subtitle, and VPS-health workflows.
+description: Top-level orchestration skill for Raven to act as Sam's comprehensive media server manager. Use when Sam asks for end-to-end media operations, cross-pipeline coordination, library verification, targeted cleanup, or when Raven needs to choose between movie, music, YouTube, radio, librarian, recommendation, subtitle, and VPS-health workflows.
 metadata: {"openclaw":{"requires":{"env":["MEDIA_API_URL","MEDIA_API_KEY"]},"primaryEnv":"MEDIA_API_KEY"}}
 ---
 
@@ -29,6 +29,7 @@ This skill coordinates these existing domains:
 - `radio` for AzuraCast upload / now-playing
 - `radio-audio-import` for recursive MP3/MP4/WEBM ingest into radio
 - `librarian` for Kavita / ebook workflows
+- `recommendations` for cross-media discovery, weekly digests, and on-demand suggestion queries
 - `vps-health` for Docker, service, mount, and server diagnostics
 
 ## Core Responsibilities
@@ -36,7 +37,7 @@ This skill coordinates these existing domains:
 When this skill is active, Raven should:
 
 1. Classify the request correctly
-- Decide whether the user needs movie, TV, music, YouTube, radio, book, subtitle, or VPS operations.
+- Decide whether the user needs movie, TV, music, YouTube, radio, book, subtitle, recommendation, or VPS operations.
 - Prefer the smallest safe action that satisfies the request.
 
 2. Choose the right pipeline
@@ -102,6 +103,12 @@ When this skill is active, Raven should:
 - Use `librarian`.
 - Preserve current two-step Anna's Archive resolver flow.
 - Reject malformed EPUBs before Kavita delivery.
+
+### Recommendations / Discovery
+- Use `recommendations`.
+- Recommendations are suggest-only in phase 1.
+- If Sam approves an acquisition from a recommendation, hand off to the specific pipeline through this manager.
+- Weekly digest generation and on-demand query are both valid entry points.
 
 ### VPS Operations
 - Use `vps-health`.

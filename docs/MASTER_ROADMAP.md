@@ -49,6 +49,18 @@
 
 ---
 
-## Phase 7: Recommendation Engine (Future)
+## Phase 7: Recommendation Engine (Phase 1 Implemented)
 - Goal: personalized "Raven Recommends"
-- Logic: cross-reference current library with external trending/critic signals
+- Implemented in phase 1:
+  - central recommendation engine inside `sam-media-api`
+  - Postgres-backed `reco` schema
+  - activity ingestion from Jellyfin, Navidrome, and Kavita
+  - weekly digest generation
+  - on-demand recommendation queries
+  - optional LLM theme synthesis through OpenRouter
+  - VPS cron schedule for daily ingest + Sunday digest generation
+- Deferred to later phases:
+  - Audiobookshelf ingestion
+  - Telegram delivery through OpenClaw
+  - vector search / semantic memory
+  - recommendation-triggered acquisition flows
