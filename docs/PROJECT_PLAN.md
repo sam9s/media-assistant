@@ -124,6 +124,39 @@
     - daily ingest at `03:30`
     - weekly digest generation every Sunday at `09:00`
 
+**Project state note (2026-03-10, OpenClaw VPS Baseline):**
+- Old OpenClaw runtime residue on the VPS has been cleaned and backed up.
+  - Backup archive kept at `/root/backups/openclaw-backup-20260310-122058.tgz`
+  - Removed: old `~/.openclaw` runtime state, old OpenClaw PM2 processes, old global npm install, old shell completion hook, and stale user/systemd fragments tied to the previous deployment
+- Fresh OpenClaw baseline is now installed on the VPS.
+  - Version: `OpenClaw 2026.3.8`
+  - Runtime: Node `v22.22.0`
+  - Gateway mode: loopback-only
+  - Gateway service: systemd user service, healthy
+  - OpenRouter auth is configured and working
+- Raven workspace is now wired into the fresh OpenClaw instance.
+  - Workspace skills copied from `skills/` into `~/.openclaw/workspace/skills/`
+  - Identity/routing files copied from `openclaw/` into `~/.openclaw/workspace/`
+  - Ready custom skills:
+    - `media-assistant`
+    - `media-manager`
+    - `music`
+    - `youtube`
+    - `librarian`
+    - `photos`
+    - `radio`
+    - `radio-audio-import`
+    - `recommendations`
+    - `vps-health`
+- Model baseline is configured explicitly instead of relying on generic OpenRouter auto-routing.
+  - default: `reasoning -> openrouter/google/gemini-2.5-pro`
+  - alias: `cheap -> openrouter/moonshotai/kimi-k2.5`
+  - alias: `coding -> openrouter/openai/gpt-5-codex`
+- Local agent-turn validation has passed against the live workspace and skill set.
+- Telegram channel setup is intentionally still pending.
+  - Next required input: fresh Telegram bot token for the clean Raven deployment
+  - Recommendation: rotate any previously used bot/gateway tokens rather than reusing the old OpenClaw-era secrets
+
 ---
 
 ## 1. WHAT IS BUILT

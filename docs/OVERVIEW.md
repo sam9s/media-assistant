@@ -102,6 +102,18 @@ Located in `openclaw/` and `skills/`:
 | `skills/recommendations/SKILL.md` | Weekly digest + on-demand cross-media recommendations |
 | `skills/vps-health/SKILL.md` | Full VPS health monitoring — all 34 containers + system resources |
 
+Current VPS deployment state:
+
+- Fresh OpenClaw baseline is installed on the VPS (`OpenClaw 2026.3.8`)
+- Gateway is loopback-only and healthy under systemd user service
+- OpenRouter auth is configured
+- Raven workspace skills are loaded and validated locally
+- Explicit model aliases are set:
+  - `cheap` -> `openrouter/moonshotai/kimi-k2.5`
+  - `reasoning` -> `openrouter/google/gemini-2.5-pro` (default)
+  - `coding` -> `openrouter/openai/gpt-5-codex`
+- Telegram channel binding is the next remaining deployment step
+
 ---
 
 ## What Is NOT Yet Built (Future Phases)
