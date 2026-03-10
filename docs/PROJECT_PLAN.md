@@ -88,7 +88,14 @@
     - update simple asset fields
     - download original asset bytes
   - New skill added: `skills/photos/SKILL.md`
-  - Runtime validation is pending an Immich API key.
+  - Runtime validation is complete.
+    - validated: list albums
+    - validated: upload asset
+    - validated: search asset by filename
+    - validated: download original asset bytes
+    - validated: create album
+    - validated: rename album
+    - validated: delete album
   - Current VPS ops issue:
     - `immich-server` is healthy
     - `immich-microservices` is in a restart loop with `/bin/bash: line 1: start-microservices: command not found`
