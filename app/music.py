@@ -111,7 +111,12 @@ async def _send_music_notification_once(download_id: str, kind: str, text: str) 
 async def _music_start_check(download_id: str, delay_seconds: int = 25) -> None:
     await asyncio.sleep(delay_seconds)
     info = _downloads.get(download_id)
-    if not info or info.get("start_notification_sent") or info.get("terminal_notification_sent"):
+    if (
+        not info
+        or info.get("start_notification_sent")
+        or info.get("progress_notification_sent")
+        or info.get("terminal_notification_sent")
+    ):
         return
 
     status = info.get("status")
@@ -709,11 +714,16 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     _downloads[download_id]["status"] = "done"
     _downloads[download_id]["updated_at"] = time.time()
     _persist_music_job(download_id)
-    if result.get("destination"):
-        text = f"{Path(result['destination']).name} finished importing. Navidrome scan was triggered."
-        if result.get("message"):
-            text += f" {result['message']}"
-        await _send_music_notification_once(download_id, "terminal", text)
+    destination = result.get("destination")
+    if destination:
+        text = f"{Path(destination).name} finished importing. Navidrome scan was triggered."
+    elif result.get("duplicate"):
+        text = f"{_music_title(_downloads[download_id])} was already present in Navidrome. No re-import was needed."
+    else:
+        text = f"{_music_title(_downloads[download_id])} finished importing."
+    if result.get("message"):
+        text += f" {result['message']}"
+    await _send_music_notification_once(download_id, "terminal", text)
 
 
 async def _poll_and_enrich_track(download_id: str, peer_username: str, filename: str) -> None:

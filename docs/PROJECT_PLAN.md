@@ -192,6 +192,8 @@
   - the job is queued but no progress is visible yet
   - the job failed quickly with the exact reason
 - If a job initially shows queued/no-progress and later starts transferring real bytes, one additional bounded progress-confirmation notification is sent.
+- Late startup-check messages are suppressed once a real transfer-confirmation has already been sent.
+- Album duplicate-safe outcomes now still emit a terminal Telegram message instead of silently finishing after enrichment.
 - Existing terminal success/failure notifications remain in place.
 - This is intentionally limited to one startup-check message, one real-transfer confirmation, and one terminal message to avoid spam.
 
