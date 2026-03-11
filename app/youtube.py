@@ -138,6 +138,33 @@ async def _youtube_start_check(download_id: str, delay_seconds: int = 10) -> Non
         )
 
 
+async def _maybe_send_youtube_progress_confirm(download_id: str) -> None:
+    info = _yt_downloads.get(download_id)
+    if not info or info.get("progress_notification_sent") or info.get("terminal_notification_sent"):
+        return
+    bytes_done = info.get("bytes_done") or 0
+    progress = info.get("progress_percent")
+    if bytes_done <= 0 and progress in (None, 0, 0.0):
+        return
+
+    title = info.get("title") or "YouTube download"
+    bytes_total = info.get("bytes_total")
+    speed = info.get("speed_bytes_per_second")
+    eta = info.get("eta_seconds")
+
+    parts = [f"{title} is now transferring normally."]
+    if progress is not None:
+        parts.append(f"Progress: {progress:.1f}%.")
+    if bytes_total:
+        parts.append(f"Transferred: {round(bytes_done / 1_048_576, 1)} MB / {round(bytes_total / 1_048_576, 1)} MB.")
+    if speed:
+        parts.append(f"Speed: {round(speed / 1_048_576, 2)} MB/s.")
+    if eta:
+        parts.append(f"ETA: {eta}s.")
+    parts.append("This one looks healthy so far.")
+    await _send_youtube_notification_once(download_id, "progress", " ".join(parts))
+
+
 def _human_to_bytes(value: str) -> int | None:
     if not value:
         return None
@@ -571,6 +598,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
                 stderr_parts.append(text)
                 _update_progress_from_line(state, text)
                 _persist_youtube_job(download_id)
+                await _maybe_send_youtube_progress_confirm(download_id)
 
         await asyncio.gather(_consume_stdout(), _consume_stderr())
         rc = await proc.wait()
@@ -758,6 +786,7 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
         "cover_art_applied": False,
         "cover_art_source": None,
         "start_notification_sent": False,
+        "progress_notification_sent": False,
         "terminal_notification_sent": False,
     }
     _persist_youtube_job(download_id)

@@ -150,6 +150,37 @@ async def _music_start_check(download_id: str, delay_seconds: int = 25) -> None:
         )
 
 
+async def _maybe_send_music_progress_confirm(download_id: str) -> None:
+    info = _downloads.get(download_id)
+    if not info or info.get("progress_notification_sent") or info.get("terminal_notification_sent"):
+        return
+    if (info.get("bytes_done") or 0) <= 0 and (info.get("files_done") or 0) <= 0:
+        return
+
+    title = _music_title(info)
+    progress = info.get("progress_percent")
+    bytes_done = info.get("bytes_done") or 0
+    bytes_total = info.get("bytes_total")
+    speed = info.get("speed_bytes_per_second")
+    eta = info.get("eta_seconds")
+    files_done = info.get("files_done")
+    files_total = info.get("files_total")
+
+    parts = [f"{title} is now transferring normally."]
+    if progress is not None:
+        parts.append(f"Progress: {progress:.1f}%.")
+    if bytes_total:
+        parts.append(f"Transferred: {round(bytes_done / 1_048_576, 1)} MB / {round(bytes_total / 1_048_576, 1)} MB.")
+    if files_total:
+        parts.append(f"Files: {files_done}/{files_total}.")
+    if speed:
+        parts.append(f"Speed: {round(speed / 1_048_576, 2)} MB/s.")
+    if eta:
+        parts.append(f"ETA: {eta}s.")
+    parts.append("This one looks healthy so far.")
+    await _send_music_notification_once(download_id, "progress", " ".join(parts))
+
+
 def _persist_music_job(download_id: str) -> None:
     info = _downloads.get(download_id)
     if not info:
@@ -558,6 +589,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
             _downloads[download_id]["progress_percent"] = round((_cur_total_bytes / total_bytes) * 100, 1) if total_bytes else None
             _downloads[download_id]["updated_at"] = time.time()
             _persist_music_job(download_id)
+            await _maybe_send_music_progress_confirm(download_id)
             logger.info("Download %s: %d/%d done, %d failed", download_id, completed, file_count, failed)
             if completed + failed >= file_count:
                 break
@@ -723,6 +755,7 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
             _downloads[download_id]["progress_percent"] = round((_cur_bytes / total_bytes) * 100, 1) if total_bytes else None
             _downloads[download_id]["updated_at"] = time.time()
             _persist_music_job(download_id)
+            await _maybe_send_music_progress_confirm(download_id)
             logger.info("Track download %s: completed=%d failed=%d bytes=%d", download_id, completed, failed, _cur_bytes)
             if completed + failed >= 1:
                 break
@@ -986,6 +1019,7 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "updated_at": time.time(),
             "started_at": time.time(),
             "start_notification_sent": False,
+            "progress_notification_sent": False,
             "terminal_notification_sent": False,
         }
         _persist_music_job(download_id)
@@ -1029,6 +1063,7 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "updated_at": time.time(),
             "started_at": time.time(),
             "start_notification_sent": False,
+            "progress_notification_sent": False,
             "terminal_notification_sent": False,
         }
         _persist_music_job(download_id)
@@ -1075,6 +1110,7 @@ async def music_import(req: MusicImportRequest, _: str = Depends(_require_api_ke
         "updated_at": time.time(),
         "started_at": time.time(),
         "start_notification_sent": False,
+        "progress_notification_sent": False,
         "terminal_notification_sent": False,
     }
     _persist_music_job(download_id)

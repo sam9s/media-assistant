@@ -191,8 +191,9 @@
   - the download has started and real progress is visible
   - the job is queued but no progress is visible yet
   - the job failed quickly with the exact reason
+- If a job initially shows queued/no-progress and later starts transferring real bytes, one additional bounded progress-confirmation notification is sent.
 - Existing terminal success/failure notifications remain in place.
-- This is intentionally limited to one startup-check message plus one terminal message to avoid spam.
+- This is intentionally limited to one startup-check message, one real-transfer confirmation, and one terminal message to avoid spam.
 
 **Project state note (2026-03-11, targeted Navidrome ghost detection for music):**
 - After music delivery and Navidrome scan trigger, the backend now runs a read-only stale-entry check against the old source path(s).

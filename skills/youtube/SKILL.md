@@ -97,6 +97,10 @@ Important:
   - started successfully with real progress, or
   - queued but no progress yet, or
   - failed quickly with the exact reason.
+- If transfer bytes later begin moving after a queued/no-progress startup check, YouTube now sends one additional bounded progress-confirmation message:
+  - real transfer has begun
+  - current bytes / percent / speed / ETA when available
+  - this one looks healthy so far
 
 ## Output Paths
 
