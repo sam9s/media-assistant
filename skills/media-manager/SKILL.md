@@ -172,3 +172,8 @@ Use the unified jobs API first. It currently covers:
 - `youtube`
 
 Movie/Torrent progress remains best viewed through qBittorrent until that pipeline is normalized into the same backend model.
+
+Important:
+- Music and YouTube jobs now persist across `sam-media-api` restarts.
+- Terminal failures should be treated as real outcomes, not guessed as "aged out".
+- When a job is `failed` or `stuck`, report the exact stored reason back to Sam.

@@ -114,6 +114,11 @@ GET $MEDIA_API_URL/jobs?pipeline=music
 
 Use this when Sam asks for cross-pipeline progress or `show current jobs`.
 
+Important:
+- Music jobs are now persisted in backend storage, not only in memory.
+- If a music job fails or gets stuck, Raven should report the exact stored reason.
+- Do not tell Sam a missing active in-memory job has "aged out" unless the persisted jobs API confirms that interpretation.
+
 ---
 
 ## Your Workflow

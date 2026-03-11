@@ -76,6 +76,10 @@ GET $MEDIA_API_URL/jobs?pipeline=youtube
 
 Use this when Sam asks for cross-pipeline progress or `show current jobs`.
 
+Important:
+- YouTube jobs are now persisted in backend storage, not only in memory.
+- If a YouTube job fails, report the exact stored reason from the backend.
+
 ## Workflow
 
 1. Call `/youtube/search` first (`check_playlist: true` unless Sam asks to skip playlist checks).

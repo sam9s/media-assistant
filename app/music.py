@@ -27,6 +27,8 @@ from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 
 from app.config import settings
+from app.job_store import get_job as db_get_job
+from app.job_store import upsert_job
 from app.music_enrichment import enrich_and_deliver, enrich_single_track
 from app.notifications import send_telegram_message
 from app.navidrome import search_album as navidrome_search
@@ -87,34 +89,34 @@ _search_cache: dict[str, dict] = {}   # search_id → {mode, results}
 _downloads: dict[str, dict] = {}      # download_id → {language, peer, files, folder, status, ...}
 
 
-def list_music_jobs() -> list[dict]:
-    jobs = []
-    for download_id, info in _downloads.items():
-        jobs.append(
-            {
-                "job_id": download_id,
-                "pipeline": "music",
-                "title": info.get("album") or info.get("title") or info.get("folder_path") or info.get("source_path") or "Music job",
-                "status": info.get("status"),
-                "progress_percent": info.get("progress_percent"),
-                "bytes_done": info.get("bytes_done"),
-                "bytes_total": info.get("bytes_total"),
-                "speed_bytes_per_second": info.get("speed_bytes_per_second"),
-                "eta_seconds": info.get("eta_seconds"),
-                "files_done": info.get("files_done"),
-                "files_total": info.get("files_total"),
-                "updated_at": info.get("updated_at"),
-                "message": info.get("message"),
-            }
-        )
-    return jobs
+def _music_title(info: dict) -> str:
+    return info.get("album") or info.get("title") or info.get("folder_path") or info.get("source_path") or "Music job"
 
 
-def get_music_job(download_id: str) -> Optional[dict]:
+def _persist_music_job(download_id: str) -> None:
     info = _downloads.get(download_id)
     if not info:
-        return None
-    return next((job for job in list_music_jobs() if job["job_id"] == download_id), None)
+        return
+    upsert_job(
+        job_id=download_id,
+        pipeline="music",
+        title=_music_title(info),
+        status=info.get("status") or "unknown",
+        progress_percent=info.get("progress_percent"),
+        bytes_done=info.get("bytes_done"),
+        bytes_total=info.get("bytes_total"),
+        speed_bytes_per_second=info.get("speed_bytes_per_second"),
+        eta_seconds=info.get("eta_seconds"),
+        files_done=info.get("files_done"),
+        files_total=info.get("files_total"),
+        message=info.get("message"),
+        started_at=info.get("started_at"),
+        payload={
+            "language": info.get("language"),
+            "peer": info.get("peer_username"),
+            "mode": info.get("mode"),
+        },
+    )
 
 # ---------------------------------------------------------------------------
 # Models
@@ -452,6 +454,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
 
     _downloads[download_id]["status"] = "downloading"
     _downloads[download_id]["updated_at"] = time.time()
+    _persist_music_job(download_id)
 
     our_files = {f["filename"] for f in info.get("files", [])}
     _start = time.monotonic()
@@ -497,6 +500,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
             _downloads[download_id]["eta_seconds"] = eta
             _downloads[download_id]["progress_percent"] = round((_cur_total_bytes / total_bytes) * 100, 1) if total_bytes else None
             _downloads[download_id]["updated_at"] = time.time()
+            _persist_music_job(download_id)
             logger.info("Download %s: %d/%d done, %d failed", download_id, completed, file_count, failed)
             if completed + failed >= file_count:
                 break
@@ -518,6 +522,10 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                         f"Peer {peer_username} was {reason}. Download cancelled."
                     )
                     _downloads[download_id]["updated_at"] = time.time()
+                    _persist_music_job(download_id)
+                    await send_telegram_message(
+                        f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} was {reason}."
+                    )
                     return
         except Exception as e:
             logger.warning("Transfer poll error: %s", e)
@@ -530,10 +538,15 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
             f"Peer {peer_username} rejected or failed the transfer."
         )
         _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await send_telegram_message(
+            f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} rejected or failed the transfer."
+        )
         return
     _downloads[download_id]["status"] = "enriching"
     _downloads[download_id]["progress_percent"] = 100.0
     _downloads[download_id]["updated_at"] = time.time()
+    _persist_music_job(download_id)
 
     # Derive local folder path: slskd saves to {downloads_dir}/{album_folder_name}/
     # (slskd uses only the last path component as the folder name, no peer subfolder)
@@ -578,11 +591,16 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — album could not be identified."
         _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await send_telegram_message(
+            f"Music download failed for {_music_title(_downloads[download_id])}: {_downloads[download_id]['message']}"
+        )
         return
     if result.get("message"):
         _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
     _downloads[download_id]["updated_at"] = time.time()
+    _persist_music_job(download_id)
     if result.get("destination"):
         await send_telegram_message(f"{Path(result['destination']).name} finished importing. Navidrome scan was triggered.")
 
@@ -596,6 +614,7 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
 
     _downloads[download_id]["status"] = "downloading"
     _downloads[download_id]["updated_at"] = time.time()
+    _persist_music_job(download_id)
 
     _start = time.monotonic()
     _last_bytes: int = 0
@@ -637,6 +656,7 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
             _downloads[download_id]["eta_seconds"] = eta
             _downloads[download_id]["progress_percent"] = round((_cur_bytes / total_bytes) * 100, 1) if total_bytes else None
             _downloads[download_id]["updated_at"] = time.time()
+            _persist_music_job(download_id)
             logger.info("Track download %s: completed=%d failed=%d bytes=%d", download_id, completed, failed, _cur_bytes)
             if completed + failed >= 1:
                 break
@@ -658,6 +678,10 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                         f"Peer {peer_username} was {reason}. Download cancelled."
                     )
                     _downloads[download_id]["updated_at"] = time.time()
+                    _persist_music_job(download_id)
+                    await send_telegram_message(
+                        f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} was {reason}."
+                    )
                     return
         except Exception as e:
             logger.warning("Track poll error: %s", e)
@@ -670,10 +694,15 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
             f"Peer {peer_username} rejected or failed the transfer."
         )
         _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await send_telegram_message(
+            f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} rejected or failed the transfer."
+        )
         return
     _downloads[download_id]["status"] = "enriching"
     _downloads[download_id]["progress_percent"] = 100.0
     _downloads[download_id]["updated_at"] = time.time()
+    _persist_music_job(download_id)
 
     # slskd saves single file to {downloads_dir}/{last_folder_component}/{basename}
     folder_name = _remote_folder(filename).replace("\\", "/").rsplit("/", 1)[-1]
@@ -707,11 +736,16 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — track could not be identified."
         _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await send_telegram_message(
+            f"Music download failed for {_music_title(_downloads[download_id])}: {_downloads[download_id]['message']}"
+        )
         return
     if result.get("message"):
         _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
     _downloads[download_id]["updated_at"] = time.time()
+    _persist_music_job(download_id)
     if result.get("destination"):
         await send_telegram_message(f"{Path(result['destination']).stem} finished importing. Navidrome scan was triggered.")
 
@@ -720,6 +754,7 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
     _downloads[download_id]["status"] = "enriching"
     _downloads[download_id]["updated_at"] = time.time()
     _downloads[download_id]["progress_percent"] = None
+    _persist_music_job(download_id)
     try:
         if mode == "track":
             result = await enrich_single_track(
@@ -741,15 +776,24 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
         if result.get("duplicate"):
             _downloads[download_id]["duplicate"] = True
         _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
         if result.get("success") and result.get("destination"):
             await send_telegram_message(
                 f"{Path(result['destination']).name} manual music import finished. Navidrome scan was triggered."
+            )
+        elif not result.get("success"):
+            await send_telegram_message(
+                f"Manual music import failed for {_music_title(_downloads[download_id])}: {_downloads[download_id].get('message') or 'unknown error'}"
             )
     except Exception as exc:
         logger.exception("Manual import failed for %s", source_path)
         _downloads[download_id]["status"] = "failed"
         _downloads[download_id]["message"] = str(exc)
         _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await send_telegram_message(
+            f"Manual music import failed for {_music_title(_downloads[download_id])}: {exc}"
+        )
     finally:
         if "/manual_imports/" in source_path:
             try:
@@ -860,7 +904,9 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "files_done": 0,
             "files_total": 1,
             "updated_at": time.time(),
+            "started_at": time.time(),
         }
+        _persist_music_job(download_id)
 
         await _slskd_download_files(peer, file_list)
         _downloads[download_id]["status"] = "downloading"
@@ -896,7 +942,9 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "files_done": 0,
             "files_total": len(files),
             "updated_at": time.time(),
+            "started_at": time.time(),
         }
+        _persist_music_job(download_id)
 
         await _slskd_download_files(peer, files)
         _downloads[download_id]["status"] = "downloading"
@@ -935,7 +983,9 @@ async def music_import(req: MusicImportRequest, _: str = Depends(_require_api_ke
         "files_done": 0,
         "files_total": len(flac_files),
         "updated_at": time.time(),
+        "started_at": time.time(),
     }
+    _persist_music_job(download_id)
 
     asyncio.create_task(
         _run_manual_import(
@@ -963,7 +1013,24 @@ async def music_status(download_id: str, _: str = Depends(_require_api_key)):
     """Poll download + enrichment status."""
     info = _downloads.get(download_id)
     if not info:
-        raise HTTPException(status_code=404, detail="Download ID not found")
+        stored = db_get_job(download_id)
+        if not stored:
+            raise HTTPException(status_code=404, detail="Download ID not found")
+        return {
+            "download_id": stored["job_id"],
+            "status": stored["status"],
+            "language": None,
+            "peer": None,
+            "message": stored.get("message"),
+            "progress_percent": stored.get("progress_percent"),
+            "bytes_done": stored.get("bytes_done"),
+            "bytes_total": stored.get("bytes_total"),
+            "speed_bytes_per_second": stored.get("speed_bytes_per_second"),
+            "eta_seconds": stored.get("eta_seconds"),
+            "files_done": stored.get("files_done"),
+            "files_total": stored.get("files_total"),
+            "updated_at": stored.get("updated_at"),
+        }
     resp: dict = {
         "download_id": download_id,
         "status": info.get("status"),

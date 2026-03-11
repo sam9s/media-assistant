@@ -178,6 +178,13 @@
 - Existing per-pipeline status endpoints also expose richer progress fields for music and YouTube.
 - Books/photos/radio remain coarse success-state pipelines because fine-grained progress adds little value there.
 
+**Project state note (2026-03-11, persistent jobs + failure visibility):**
+- Music and YouTube jobs now persist in Postgres-backed job storage instead of memory only.
+- `GET /jobs/{job_id}` survives `sam-media-api` restarts.
+- `GET /music/status/{download_id}` and `GET /youtube/status/{download_id}` now fall back to persisted job records when the in-memory entry is gone.
+- Music and YouTube terminal failures now store the exact reason durably.
+- Failure notifications are now sent for music/YouTube terminal failure cases as well as success cases.
+
 ---
 
 ## 1. WHAT IS BUILT

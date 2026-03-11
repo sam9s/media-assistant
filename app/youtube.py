@@ -21,6 +21,8 @@ from pydantic import BaseModel
 
 from app import navidrome
 from app.config import settings
+from app.job_store import get_job as db_get_job
+from app.job_store import upsert_job
 from app.notifications import send_telegram_message
 from app.youtube_enrichment import enrich_youtube_opus
 
@@ -61,29 +63,26 @@ _DEST: dict[str, str] = {
 }
 
 
-def list_youtube_jobs() -> list[dict]:
-    jobs = []
-    for download_id, info in _yt_downloads.items():
-        jobs.append(
-            {
-                "job_id": download_id,
-                "pipeline": "youtube",
-                "title": info.get("title"),
-                "status": info.get("status"),
-                "progress_percent": info.get("progress_percent"),
-                "bytes_done": info.get("bytes_done"),
-                "bytes_total": info.get("bytes_total"),
-                "speed_bytes_per_second": info.get("speed_bytes_per_second"),
-                "eta_seconds": info.get("eta_seconds"),
-                "updated_at": info.get("updated_at"),
-                "message": info.get("error"),
-            }
-        )
-    return jobs
-
-
-def get_youtube_job(download_id: str) -> dict | None:
-    return next((job for job in list_youtube_jobs() if job["job_id"] == download_id), None)
+def _persist_youtube_job(download_id: str) -> None:
+    info = _yt_downloads.get(download_id)
+    if not info:
+        return
+    upsert_job(
+        job_id=download_id,
+        pipeline="youtube",
+        title=info.get("title") or "YouTube job",
+        status=info.get("status") or "unknown",
+        progress_percent=info.get("progress_percent"),
+        bytes_done=info.get("bytes_done"),
+        bytes_total=info.get("bytes_total"),
+        speed_bytes_per_second=info.get("speed_bytes_per_second"),
+        eta_seconds=info.get("eta_seconds"),
+        files_done=1 if info.get("status") == "done" else 0,
+        files_total=1,
+        message=info.get("error"),
+        started_at=info.get("started_at"),
+        payload={"language": info.get("language")},
+    )
 
 
 def _human_to_bytes(value: str) -> int | None:
@@ -458,6 +457,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
     state = _yt_downloads[download_id]
     state["status"] = "downloading"
     state["updated_at"] = time.time()
+    _persist_youtube_job(download_id)
     started_at = time.time()
 
     cookies = settings.YOUTUBE_COOKIES_FILE
@@ -470,6 +470,9 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
             "See setup instructions."
         )
         logger.error("yt-dlp blocked: cookies file invalid at %s (%s)", cookies, reason)
+        state["updated_at"] = time.time()
+        _persist_youtube_job(download_id)
+        await send_telegram_message(f"YouTube download failed for {title}: {state['error']}")
         return
 
     cmd = [
@@ -510,6 +513,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
                 text = line.decode(errors="replace")
                 stderr_parts.append(text)
                 _update_progress_from_line(state, text)
+                _persist_youtube_job(download_id)
 
         await asyncio.gather(_consume_stdout(), _consume_stderr())
         rc = await proc.wait()
@@ -533,6 +537,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
             state["status"] = "done"
             state["progress_percent"] = 100.0
             state["updated_at"] = time.time()
+            _persist_youtube_job(download_id)
             logger.info("yt-dlp done: %s", title)
             try:
                 await navidrome.trigger_scan()
@@ -544,13 +549,17 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
             state["status"] = "failed"
             state["error"] = err
             state["updated_at"] = time.time()
+            _persist_youtube_job(download_id)
             logger.error("yt-dlp failed (rc=%d): %s", rc, err)
+            await send_telegram_message(f"YouTube download failed for {title}: {err}")
 
     except Exception as e:
         state["status"] = "failed"
         state["error"] = str(e)
         state["updated_at"] = time.time()
+        _persist_youtube_job(download_id)
         logger.error("yt-dlp exception: %s", e)
+        await send_telegram_message(f"YouTube download failed for {title}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +673,7 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
         "speed_bytes_per_second": None,
         "eta_seconds": None,
         "updated_at": time.time(),
+        "started_at": time.time(),
         "source_format_id": None,
         "source_abr_kbps": None,
         "source_acodec": None,
@@ -679,6 +689,7 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
         "cover_art_applied": False,
         "cover_art_source": None,
     }
+    _persist_youtube_job(download_id)
 
     asyncio.create_task(_yt_download_task(download_id, url, title, uploader, lang))
 
@@ -694,5 +705,8 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
 async def youtube_status(download_id: str, _: str = Depends(_require_api_key)):
     state = _yt_downloads.get(download_id)
     if not state:
-        raise HTTPException(status_code=404, detail="download_id not found")
+        stored = db_get_job(download_id)
+        if not stored:
+            raise HTTPException(status_code=404, detail="download_id not found")
+        return {"download_id": download_id, **stored}
     return {"download_id": download_id, **state}
