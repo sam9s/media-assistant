@@ -674,12 +674,25 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
         )
         return
 
-    result = await enrich_and_deliver(
-        download_folder=local_folder,
-        language=info["language"],
-        artist_hint=info.get("artist", ""),
-        album_hint=info.get("album", ""),
-    )
+    try:
+        result = await enrich_and_deliver(
+            download_folder=local_folder,
+            language=info["language"],
+            artist_hint=info.get("artist", ""),
+            album_hint=info.get("album", ""),
+        )
+    except Exception as e:
+        logger.exception("Album enrichment crashed for %s", local_folder)
+        _downloads[download_id]["status"] = "failed"
+        _downloads[download_id]["message"] = f"Enrichment crashed: {e}"
+        _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await _send_music_notification_once(
+            download_id,
+            "terminal",
+            f"Music download failed for {_music_title(_downloads[download_id])}: Enrichment crashed: {e}",
+        )
+        return
     if not result.get("success"):
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — album could not be identified."
@@ -829,12 +842,25 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
         )
         return
 
-    result = await enrich_single_track(
-        flac_path=local_path,
-        language=info["language"],
-        title_hint=info.get("title", ""),
-        artist_hint=info.get("artist", ""),
-    )
+    try:
+        result = await enrich_single_track(
+            flac_path=local_path,
+            language=info["language"],
+            title_hint=info.get("title", ""),
+            artist_hint=info.get("artist", ""),
+        )
+    except Exception as e:
+        logger.exception("Track enrichment crashed for %s", local_path)
+        _downloads[download_id]["status"] = "failed"
+        _downloads[download_id]["message"] = f"Enrichment crashed: {e}"
+        _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await _send_music_notification_once(
+            download_id,
+            "terminal",
+            f"Music download failed for {_music_title(_downloads[download_id])}: Enrichment crashed: {e}",
+        )
+        return
     if not result.get("success"):
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — track could not be identified."

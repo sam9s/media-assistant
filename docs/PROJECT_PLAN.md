@@ -201,6 +201,12 @@
 - Current behavior is detection/report only, not silent DB mutation from `sam-media-api`.
 - Raven should surface these stale-entry findings in the music completion summary so Sam can decide whether an explicit cleanup pass is needed.
 
+**Project state note (2026-03-11, hardened single-track fingerprint fallback):**
+- The music pipeline no longer uses the fragile in-process `acoustid.fingerprint_file` path for track fingerprinting.
+- It now runs `fpcalc` as a child subprocess so malformed or multi-channel edge cases cannot abort the worker process.
+- If fingerprinting fails, music enrichment falls back cleanly to filename/tag-based metadata instead of leaving the job stuck in `enriching`.
+- Music enrichment calls are now wrapped so unexpected enrichment crashes still land in a terminal failed state with a notification.
+
 ---
 
 ## 1. WHAT IS BUILT

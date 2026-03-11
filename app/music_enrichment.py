@@ -17,6 +17,7 @@ Flow:
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -311,14 +312,37 @@ async def _fetch_bytes(url: str) -> Optional[bytes]:
 # ---------------------------------------------------------------------------
 
 async def _fingerprint_to_mbid(flac_path: str) -> Optional[str]:
-    """Run fpcalc on the file, query AcoustID, return the top MusicBrainz recording ID."""
+    """Run fpcalc in a child process, query AcoustID, return the top MusicBrainz recording ID.
+
+    Important: do not call acoustid.fingerprint_file here. Some files can trigger a
+    chromaprint assertion abort that kills the worker process. Running fpcalc as a
+    separate subprocess keeps failures contained and lets the pipeline fall back.
+    """
     if not settings.ACOUSTID_API_KEY:
         return None
     try:
-        # fpcalc is a blocking subprocess — run in thread pool
-        duration, fingerprint = await asyncio.to_thread(
-            acoustid.fingerprint_file, flac_path
+        proc = await asyncio.create_subprocess_exec(
+            "fpcalc",
+            "-json",
+            flac_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning(
+                "fpcalc failed for %s: rc=%s stderr=%s",
+                flac_path,
+                proc.returncode,
+                stderr.decode(errors="replace").strip(),
+            )
+            return None
+        data = json.loads(stdout.decode(errors="replace") or "{}")
+        duration = data.get("duration")
+        fingerprint = data.get("fingerprint")
+        if not duration or not fingerprint:
+            logger.warning("fpcalc produced no usable fingerprint for %s", flac_path)
+            return None
         results = await asyncio.to_thread(
             acoustid.lookup,
             settings.ACOUSTID_API_KEY,
