@@ -154,8 +154,11 @@ Ask language + pick in one message. No need for two separate prompts.
 🔁 Enrichment will run automatically after download — AcoustID fingerprint → MusicBrainz → cover art → Navidrome scan.
 ✅ Will appear in Navidrome in a few minutes.
 ```
+8. Completion notification behavior:
+- After a successful import/delivery, Sam will get an automatic Telegram message.
+- For music, the notification is sent after delivery succeeds and the Navidrome scan is triggered.
 
-8. If Sam asks for status later, call `GET /music/status/{download_id}` and report:
+9. If Sam asks for status later, call `GET /music/status/{download_id}` and report:
 ```
 ⬇️ Downloading... (12 files)
 🔬 Enriching... (tagging + moving to library)

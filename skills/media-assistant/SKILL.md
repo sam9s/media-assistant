@@ -177,7 +177,10 @@ Which one? Hollywood, Hindi, TV-Hollywood, or TV-Indian?
 
 4. **WAIT** for Sam's pick and category before calling `/download`
 5. After success: `✅ Added to queue → /downloads/complete/Movies/Hollywood`
-6. If Sam asks for subtitles:
+6. Completion notification behavior:
+- Once the movie/TV pipeline finishes and Jellyfin availability is verified best-effort, Sam will get an automatic Telegram message.
+- Do not promise manual timer polling anymore unless the pipeline itself failed to start.
+7. If Sam asks for subtitles:
    - Use the exact original seeded filename first. The movie completion flow returns this as `original_release_name`.
    - Call `POST /subtitles/search` with `original_name` set to that exact release name.
    - If `exact_match_found = true`, you may proceed to `POST /subtitles/download`.

@@ -102,6 +102,9 @@ Novel, comic, or magazine? Which one?
 ✅ Atomic Habits saved to Books/James Clear/ (0.6 MB)
 📚 Kavita scan triggered — will appear in your library shortly
 ```
+7. Completion notification behavior:
+- After a successful download, the API does a best-effort Kavita availability check.
+- Sam will get an automatic Telegram message when the book is available, or a fallback message that the scan was triggered and it should appear shortly.
 
 ### When EPUB validation fails (HTTP 422)
 ```

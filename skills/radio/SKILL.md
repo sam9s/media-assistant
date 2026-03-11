@@ -37,6 +37,7 @@ replace=false
 1. Confirm the file is an MP3.
 2. Call `POST /radio/upload` with the MP3 file.
 3. After success, tell Sam the file was uploaded directly into AzuraCast station media and indexed successfully.
+4. Sam will also get an automatic Telegram message after a successful radio upload.
 
 ## Important rules
 

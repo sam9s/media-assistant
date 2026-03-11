@@ -73,6 +73,9 @@ When available, status also includes:
 4. Call `/youtube/download`.
 5. If asked, call `/youtube/status/{download_id}` and report progress.
    When `status = done`, prefer reporting the enriched metadata if `enrichment_status = applied`.
+6. Completion notification behavior:
+- After a successful YouTube download, Sam will get an automatic Telegram message.
+- The notification is sent after the file is saved and the Navidrome scan is triggered.
 
 ## Output Paths
 

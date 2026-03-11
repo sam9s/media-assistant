@@ -128,6 +128,7 @@ Optional query:
 - say what was uploaded
 - which album was used
 - returned asset id / album id
+- note that Sam will also get an automatic Telegram message after a successful upload
 
 ## Operational Note
 
