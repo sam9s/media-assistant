@@ -185,6 +185,15 @@
 - Music and YouTube terminal failures now store the exact reason durably.
 - Failure notifications are now sent for music/YouTube terminal failure cases as well as success cases.
 
+**Project state note (2026-03-11, startup-check notifications for music + YouTube):**
+- Music and YouTube now send one bounded early follow-up notification shortly after a job is launched.
+- That early message tells Sam one of three things:
+  - the download has started and real progress is visible
+  - the job is queued but no progress is visible yet
+  - the job failed quickly with the exact reason
+- Existing terminal success/failure notifications remain in place.
+- This is intentionally limited to one startup-check message plus one terminal message to avoid spam.
+
 ---
 
 ## 1. WHAT IS BUILT

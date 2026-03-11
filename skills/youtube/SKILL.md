@@ -79,6 +79,7 @@ Use this when Sam asks for cross-pipeline progress or `show current jobs`.
 Important:
 - YouTube jobs are now persisted in backend storage, not only in memory.
 - If a YouTube job fails, report the exact stored reason from the backend.
+- For fresh YouTube downloads, expect one early startup-check notification plus one terminal notification.
 
 ## Workflow
 
@@ -92,6 +93,10 @@ Important:
 6. Completion notification behavior:
 - After a successful YouTube download, Sam will get an automatic Telegram message.
 - The notification is sent after the file is saved and the Navidrome scan is triggered.
+- YouTube also sends one bounded startup-check message shortly after launch:
+  - started successfully with real progress, or
+  - queued but no progress yet, or
+  - failed quickly with the exact reason.
 
 ## Output Paths
 

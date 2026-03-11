@@ -85,6 +85,59 @@ def _persist_youtube_job(download_id: str) -> None:
     )
 
 
+async def _send_youtube_notification_once(download_id: str, kind: str, text: str) -> bool:
+    info = _yt_downloads.get(download_id)
+    if not info:
+        return False
+    flag = f"{kind}_notification_sent"
+    if info.get(flag):
+        return False
+    sent = await send_telegram_message(text)
+    if sent:
+        info[flag] = True
+        info["updated_at"] = time.time()
+        _persist_youtube_job(download_id)
+    return sent
+
+
+async def _youtube_start_check(download_id: str, delay_seconds: int = 10) -> None:
+    await asyncio.sleep(delay_seconds)
+    info = _yt_downloads.get(download_id)
+    if not info or info.get("start_notification_sent") or info.get("terminal_notification_sent"):
+        return
+
+    status = info.get("status")
+    title = info.get("title") or "YouTube download"
+    if status in {"done", "failed"}:
+        return
+
+    bytes_done = info.get("bytes_done") or 0
+    bytes_total = info.get("bytes_total")
+    speed = info.get("speed_bytes_per_second")
+    eta = info.get("eta_seconds")
+    progress = info.get("progress_percent")
+
+    if bytes_done > 0 or progress not in (None, 0, 0.0):
+        parts = [f"{title} download started successfully."]
+        if progress is not None:
+            parts.append(f"Progress: {progress:.1f}%.")
+        if bytes_total:
+            parts.append(f"Transferred: {round(bytes_done / 1_048_576, 1)} MB / {round(bytes_total / 1_048_576, 1)} MB.")
+        if speed:
+            parts.append(f"Speed: {round(speed / 1_048_576, 2)} MB/s.")
+        if eta:
+            parts.append(f"ETA: {eta}s.")
+        await _send_youtube_notification_once(download_id, "start", " ".join(parts))
+        return
+
+    if status in {"starting", "downloading"}:
+        await _send_youtube_notification_once(
+            download_id,
+            "start",
+            f"{title} is queued but no download progress is visible yet. I'm still tracking it.",
+        )
+
+
 def _human_to_bytes(value: str) -> int | None:
     if not value:
         return None
@@ -472,7 +525,11 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
         logger.error("yt-dlp blocked: cookies file invalid at %s (%s)", cookies, reason)
         state["updated_at"] = time.time()
         _persist_youtube_job(download_id)
-        await send_telegram_message(f"YouTube download failed for {title}: {state['error']}")
+        await _send_youtube_notification_once(
+            download_id,
+            "terminal",
+            f"YouTube download failed for {title}: {state['error']}",
+        )
         return
 
     cmd = [
@@ -543,7 +600,11 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
                 await navidrome.trigger_scan()
             except Exception as e:
                 logger.warning("Navidrome scan failed after yt-dlp download: %s", e)
-            await send_telegram_message(f"{title} finished downloading. Navidrome scan was triggered.")
+            await _send_youtube_notification_once(
+                download_id,
+                "terminal",
+                f"{title} finished downloading. Navidrome scan was triggered.",
+            )
         else:
             err = stderr_text[-500:]
             state["status"] = "failed"
@@ -551,7 +612,11 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
             state["updated_at"] = time.time()
             _persist_youtube_job(download_id)
             logger.error("yt-dlp failed (rc=%d): %s", rc, err)
-            await send_telegram_message(f"YouTube download failed for {title}: {err}")
+            await _send_youtube_notification_once(
+                download_id,
+                "terminal",
+                f"YouTube download failed for {title}: {err}",
+            )
 
     except Exception as e:
         state["status"] = "failed"
@@ -559,7 +624,11 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
         state["updated_at"] = time.time()
         _persist_youtube_job(download_id)
         logger.error("yt-dlp exception: %s", e)
-        await send_telegram_message(f"YouTube download failed for {title}: {e}")
+        await _send_youtube_notification_once(
+            download_id,
+            "terminal",
+            f"YouTube download failed for {title}: {e}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -688,9 +757,12 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
         "enriched_album": None,
         "cover_art_applied": False,
         "cover_art_source": None,
+        "start_notification_sent": False,
+        "terminal_notification_sent": False,
     }
     _persist_youtube_job(download_id)
 
+    asyncio.create_task(_youtube_start_check(download_id, delay_seconds=10))
     asyncio.create_task(_yt_download_task(download_id, url, title, uploader, lang))
 
     return {

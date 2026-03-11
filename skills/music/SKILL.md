@@ -118,6 +118,7 @@ Important:
 - Music jobs are now persisted in backend storage, not only in memory.
 - If a music job fails or gets stuck, Raven should report the exact stored reason.
 - Do not tell Sam a missing active in-memory job has "aged out" unless the persisted jobs API confirms that interpretation.
+- For fresh music downloads, expect one early startup-check notification plus one terminal notification.
 
 ---
 
@@ -177,6 +178,10 @@ Ask language + pick in one message. No need for two separate prompts.
 8. Completion notification behavior:
 - After a successful import/delivery, Sam will get an automatic Telegram message.
 - For music, the notification is sent after delivery succeeds and the Navidrome scan is triggered.
+- Music also sends one bounded startup-check message shortly after launch:
+  - started successfully with real progress, or
+  - queued but no progress yet, or
+  - failed quickly with the exact reason.
 
 9. If Sam asks for status later, call `GET /music/status/{download_id}` and report:
 ```

@@ -177,3 +177,4 @@ Important:
 - Music and YouTube jobs now persist across `sam-media-api` restarts.
 - Terminal failures should be treated as real outcomes, not guessed as "aged out".
 - When a job is `failed` or `stuck`, report the exact stored reason back to Sam.
+- Music and YouTube also emit one early startup-check notification after launch so Sam does not need to wait blindly for the first sign of movement.
