@@ -168,6 +168,16 @@
 - This is event-driven, not timer-based.
 - Raven does not need to sleep/poll manually for these completions anymore.
 
+**Project state note (2026-03-11, unified progress layer):**
+- `sam-media-api` now exposes a lightweight unified jobs API:
+  - `GET /jobs`
+  - `GET /jobs/{job_id}`
+- Current real progress coverage:
+  - music/Soulseek: bytes, percent, speed, ETA, file counts
+  - YouTube: percent, bytes, speed, ETA when yt-dlp emits progress
+- Existing per-pipeline status endpoints also expose richer progress fields for music and YouTube.
+- Books/photos/radio remain coarse success-state pipelines because fine-grained progress adds little value there.
+
 ---
 
 ## 1. WHAT IS BUILT

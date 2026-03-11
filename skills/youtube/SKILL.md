@@ -49,6 +49,11 @@ GET $MEDIA_API_URL/youtube/status/{download_id}
 
 `status` is one of: `starting`, `downloading`, `done`, `failed`.
 When available, status also includes:
+- `progress_percent`
+- `bytes_done`
+- `bytes_total`
+- `speed_bytes_per_second`
+- `eta_seconds`
 - `source_format_id`
 - `source_abr_kbps`
 - `source_acodec`
@@ -63,6 +68,13 @@ When available, status also includes:
 - `enriched_album`
 - `cover_art_applied`
 - `cover_art_source`
+
+### Unified jobs view
+```http
+GET $MEDIA_API_URL/jobs?pipeline=youtube
+```
+
+Use this when Sam asks for cross-pipeline progress or `show current jobs`.
 
 ## Workflow
 

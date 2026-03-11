@@ -86,6 +86,36 @@ async def _slskd_headers() -> dict:
 _search_cache: dict[str, dict] = {}   # search_id → {mode, results}
 _downloads: dict[str, dict] = {}      # download_id → {language, peer, files, folder, status, ...}
 
+
+def list_music_jobs() -> list[dict]:
+    jobs = []
+    for download_id, info in _downloads.items():
+        jobs.append(
+            {
+                "job_id": download_id,
+                "pipeline": "music",
+                "title": info.get("album") or info.get("title") or info.get("folder_path") or info.get("source_path") or "Music job",
+                "status": info.get("status"),
+                "progress_percent": info.get("progress_percent"),
+                "bytes_done": info.get("bytes_done"),
+                "bytes_total": info.get("bytes_total"),
+                "speed_bytes_per_second": info.get("speed_bytes_per_second"),
+                "eta_seconds": info.get("eta_seconds"),
+                "files_done": info.get("files_done"),
+                "files_total": info.get("files_total"),
+                "updated_at": info.get("updated_at"),
+                "message": info.get("message"),
+            }
+        )
+    return jobs
+
+
+def get_music_job(download_id: str) -> Optional[dict]:
+    info = _downloads.get(download_id)
+    if not info:
+        return None
+    return next((job for job in list_music_jobs() if job["job_id"] == download_id), None)
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -421,6 +451,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
         return
 
     _downloads[download_id]["status"] = "downloading"
+    _downloads[download_id]["updated_at"] = time.time()
 
     our_files = {f["filename"] for f in info.get("files", [])}
     _start = time.monotonic()
@@ -454,6 +485,18 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                             completed += 1
                         elif "succeeded" in st or "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
                             failed += 1
+            total_bytes = int(info.get("bytes_total") or 0)
+            elapsed = max(time.monotonic() - _start, 1)
+            speed = max(_cur_total_bytes - _last_bytes, 0) / 10
+            remaining = max(total_bytes - _cur_total_bytes, 0) if total_bytes else None
+            eta = int(remaining / speed) if remaining is not None and speed > 0 else None
+            _downloads[download_id]["bytes_done"] = _cur_total_bytes
+            _downloads[download_id]["files_done"] = completed
+            _downloads[download_id]["files_total"] = file_count
+            _downloads[download_id]["speed_bytes_per_second"] = round(speed, 1) if speed else None
+            _downloads[download_id]["eta_seconds"] = eta
+            _downloads[download_id]["progress_percent"] = round((_cur_total_bytes / total_bytes) * 100, 1) if total_bytes else None
+            _downloads[download_id]["updated_at"] = time.time()
             logger.info("Download %s: %d/%d done, %d failed", download_id, completed, file_count, failed)
             if completed + failed >= file_count:
                 break
@@ -474,6 +517,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                     _downloads[download_id]["message"] = (
                         f"Peer {peer_username} was {reason}. Download cancelled."
                     )
+                    _downloads[download_id]["updated_at"] = time.time()
                     return
         except Exception as e:
             logger.warning("Transfer poll error: %s", e)
@@ -485,8 +529,11 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
         _downloads[download_id]["message"] = (
             f"Peer {peer_username} rejected or failed the transfer."
         )
+        _downloads[download_id]["updated_at"] = time.time()
         return
     _downloads[download_id]["status"] = "enriching"
+    _downloads[download_id]["progress_percent"] = 100.0
+    _downloads[download_id]["updated_at"] = time.time()
 
     # Derive local folder path: slskd saves to {downloads_dir}/{album_folder_name}/
     # (slskd uses only the last path component as the folder name, no peer subfolder)
@@ -530,10 +577,12 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     if not result.get("success"):
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — album could not be identified."
+        _downloads[download_id]["updated_at"] = time.time()
         return
     if result.get("message"):
         _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
+    _downloads[download_id]["updated_at"] = time.time()
     if result.get("destination"):
         await send_telegram_message(f"{Path(result['destination']).name} finished importing. Navidrome scan was triggered.")
 
@@ -546,6 +595,7 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
         return
 
     _downloads[download_id]["status"] = "downloading"
+    _downloads[download_id]["updated_at"] = time.time()
 
     _start = time.monotonic()
     _last_bytes: int = 0
@@ -576,6 +626,17 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                             completed += 1
                         elif "succeeded" in st or "completed" in st or "errored" in st or "cancelled" in st or "rejected" in st:
                             failed += 1
+            total_bytes = int(info.get("bytes_total") or 0)
+            speed = max(_cur_bytes - _last_bytes, 0) / 10
+            remaining = max(total_bytes - _cur_bytes, 0) if total_bytes else None
+            eta = int(remaining / speed) if remaining is not None and speed > 0 else None
+            _downloads[download_id]["bytes_done"] = _cur_bytes
+            _downloads[download_id]["files_done"] = completed
+            _downloads[download_id]["files_total"] = 1
+            _downloads[download_id]["speed_bytes_per_second"] = round(speed, 1) if speed else None
+            _downloads[download_id]["eta_seconds"] = eta
+            _downloads[download_id]["progress_percent"] = round((_cur_bytes / total_bytes) * 100, 1) if total_bytes else None
+            _downloads[download_id]["updated_at"] = time.time()
             logger.info("Track download %s: completed=%d failed=%d bytes=%d", download_id, completed, failed, _cur_bytes)
             if completed + failed >= 1:
                 break
@@ -596,6 +657,7 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                     _downloads[download_id]["message"] = (
                         f"Peer {peer_username} was {reason}. Download cancelled."
                     )
+                    _downloads[download_id]["updated_at"] = time.time()
                     return
         except Exception as e:
             logger.warning("Track poll error: %s", e)
@@ -607,8 +669,11 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
         _downloads[download_id]["message"] = (
             f"Peer {peer_username} rejected or failed the transfer."
         )
+        _downloads[download_id]["updated_at"] = time.time()
         return
     _downloads[download_id]["status"] = "enriching"
+    _downloads[download_id]["progress_percent"] = 100.0
+    _downloads[download_id]["updated_at"] = time.time()
 
     # slskd saves single file to {downloads_dir}/{last_folder_component}/{basename}
     folder_name = _remote_folder(filename).replace("\\", "/").rsplit("/", 1)[-1]
@@ -641,16 +706,20 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     if not result.get("success"):
         _downloads[download_id]["status"]  = "stuck"
         _downloads[download_id]["message"] = result.get("message") or "Enrichment failed — track could not be identified."
+        _downloads[download_id]["updated_at"] = time.time()
         return
     if result.get("message"):
         _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
+    _downloads[download_id]["updated_at"] = time.time()
     if result.get("destination"):
         await send_telegram_message(f"{Path(result['destination']).stem} finished importing. Navidrome scan was triggered.")
 
 
 async def _run_manual_import(download_id: str, source_path: str, language: str, mode: str, replace_existing: bool = False) -> None:
     _downloads[download_id]["status"] = "enriching"
+    _downloads[download_id]["updated_at"] = time.time()
+    _downloads[download_id]["progress_percent"] = None
     try:
         if mode == "track":
             result = await enrich_single_track(
@@ -671,6 +740,7 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
             _downloads[download_id]["message"] = result["message"]
         if result.get("duplicate"):
             _downloads[download_id]["duplicate"] = True
+        _downloads[download_id]["updated_at"] = time.time()
         if result.get("success") and result.get("destination"):
             await send_telegram_message(
                 f"{Path(result['destination']).name} manual music import finished. Navidrome scan was triggered."
@@ -679,6 +749,7 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
         logger.exception("Manual import failed for %s", source_path)
         _downloads[download_id]["status"] = "failed"
         _downloads[download_id]["message"] = str(exc)
+        _downloads[download_id]["updated_at"] = time.time()
     finally:
         if "/manual_imports/" in source_path:
             try:
@@ -781,6 +852,14 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "filename": filename,
             "title": result.get("file_basename", "").rsplit(".", 1)[0],
             "artist": "",
+            "bytes_done": 0,
+            "bytes_total": file_size,
+            "progress_percent": 0.0,
+            "speed_bytes_per_second": None,
+            "eta_seconds": None,
+            "files_done": 0,
+            "files_total": 1,
+            "updated_at": time.time(),
         }
 
         await _slskd_download_files(peer, file_list)
@@ -809,6 +888,14 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "folder_path": result["folder_path"],
             "artist": "",
             "album": "",
+            "bytes_done": 0,
+            "bytes_total": sum(int(f.get("size") or 0) for f in files),
+            "progress_percent": 0.0,
+            "speed_bytes_per_second": None,
+            "eta_seconds": None,
+            "files_done": 0,
+            "files_total": len(files),
+            "updated_at": time.time(),
         }
 
         await _slskd_download_files(peer, files)
@@ -840,6 +927,14 @@ async def music_import(req: MusicImportRequest, _: str = Depends(_require_api_ke
         "source_path": str(resolved_source),
         "files": [{"filename": str(p), "size": p.stat().st_size} for p in flac_files],
         "replace_existing": req.replace_existing,
+        "bytes_done": None,
+        "bytes_total": None,
+        "progress_percent": None,
+        "speed_bytes_per_second": None,
+        "eta_seconds": None,
+        "files_done": 0,
+        "files_total": len(flac_files),
+        "updated_at": time.time(),
     }
 
     asyncio.create_task(
@@ -877,4 +972,7 @@ async def music_status(download_id: str, _: str = Depends(_require_api_key)):
     }
     if info.get("message"):
         resp["message"] = info["message"]
+    for key in ("progress_percent", "bytes_done", "bytes_total", "speed_bytes_per_second", "eta_seconds", "files_done", "files_total", "updated_at"):
+        if key in info:
+            resp[key] = info.get(key)
     return resp

@@ -22,6 +22,7 @@ from app.config import settings
 from app.iptorrents import search_iptorrents
 from app.jackett import search_jackett
 from app.jellyfin import JellyfinClient
+from app.jobs import router as jobs_router
 from app.librarian import router as librarian_router
 from app.music import router as music_router
 from app.notifications import send_telegram_message, wait_for_condition
@@ -37,6 +38,7 @@ from app.tmdb import TMDBClient
 
 app = FastAPI(title="Sam's Media API", version="3.0.0")
 app.include_router(librarian_router)
+app.include_router(jobs_router)
 app.include_router(music_router)
 app.include_router(photos_router)
 app.include_router(radio_router)

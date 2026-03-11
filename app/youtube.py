@@ -48,6 +48,10 @@ _playlist_cache: dict[str, dict] = {}     # url → {items: [...], expires: floa
 
 _PLAYLIST_TTL = 3600  # cache playlist contents for 1 hour
 _YT_URL_RE = re.compile(r"^(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
+_YT_PROGRESS_RE = re.compile(
+    r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%\s+of\s+(?P<total>[~\d\.\w\s]+?)\s+at\s+(?P<speed>[~\d\.\w\s/]+)\s+ETA\s+(?P<eta>[\d:]+)",
+    re.IGNORECASE,
+)
 
 # Destination root per language
 _DEST: dict[str, str] = {
@@ -55,6 +59,88 @@ _DEST: dict[str, str] = {
     "hindi":    "/mnt/cloud/gdrive/Media/Music/Hindi/YouTube_Music",
     "punjabi":  "/mnt/cloud/gdrive/Media/Music/Punjabi/YouTube_Music",
 }
+
+
+def list_youtube_jobs() -> list[dict]:
+    jobs = []
+    for download_id, info in _yt_downloads.items():
+        jobs.append(
+            {
+                "job_id": download_id,
+                "pipeline": "youtube",
+                "title": info.get("title"),
+                "status": info.get("status"),
+                "progress_percent": info.get("progress_percent"),
+                "bytes_done": info.get("bytes_done"),
+                "bytes_total": info.get("bytes_total"),
+                "speed_bytes_per_second": info.get("speed_bytes_per_second"),
+                "eta_seconds": info.get("eta_seconds"),
+                "updated_at": info.get("updated_at"),
+                "message": info.get("error"),
+            }
+        )
+    return jobs
+
+
+def get_youtube_job(download_id: str) -> dict | None:
+    return next((job for job in list_youtube_jobs() if job["job_id"] == download_id), None)
+
+
+def _human_to_bytes(value: str) -> int | None:
+    if not value:
+        return None
+    text = value.strip().replace("~", "")
+    m = re.match(r"(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>[KMGTP]?i?B)", text, re.IGNORECASE)
+    if not m:
+        return None
+    num = float(m.group("num"))
+    unit = m.group("unit").lower()
+    scale = {
+        "b": 1,
+        "kb": 1000,
+        "mb": 1000**2,
+        "gb": 1000**3,
+        "tb": 1000**4,
+        "kib": 1024,
+        "mib": 1024**2,
+        "gib": 1024**3,
+        "tib": 1024**4,
+    }.get(unit)
+    return int(num * scale) if scale else None
+
+
+def _parse_eta_to_seconds(value: str) -> int | None:
+    if not value:
+        return None
+    parts = value.split(":")
+    try:
+        if len(parts) == 3:
+            h, m, s = [int(p) for p in parts]
+            return h * 3600 + m * 60 + s
+        if len(parts) == 2:
+            m, s = [int(p) for p in parts]
+            return m * 60 + s
+        if len(parts) == 1:
+            return int(parts[0])
+    except Exception:
+        return None
+    return None
+
+
+def _update_progress_from_line(state: dict, line: str) -> None:
+    match = _YT_PROGRESS_RE.search(line)
+    if not match:
+        return
+    percent = float(match.group("percent"))
+    total_bytes = _human_to_bytes(match.group("total"))
+    speed_bytes = _human_to_bytes(match.group("speed").replace("/s", ""))
+    eta_seconds = _parse_eta_to_seconds(match.group("eta"))
+    state["progress_percent"] = percent
+    state["bytes_total"] = total_bytes
+    state["speed_bytes_per_second"] = speed_bytes
+    state["eta_seconds"] = eta_seconds
+    state["bytes_done"] = int((percent / 100) * total_bytes) if total_bytes is not None else None
+    state["updated_at"] = time.time()
 
 
 def _validate_cookies_file(path: str) -> tuple[bool, str]:
@@ -371,6 +457,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
     dest = _DEST.get(language, _DEST["english"])
     state = _yt_downloads[download_id]
     state["status"] = "downloading"
+    state["updated_at"] = time.time()
     started_at = time.time()
 
     cookies = settings.YOUTUBE_COOKIES_FILE
@@ -390,6 +477,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
         "--cookies", cookies,
         "--js-runtimes", "node",
         "--force-overwrites",
+        "--newline",
         "--format", "bestaudio[format_id=774]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio",
         "--print", "__FORMAT__=FORMAT=%(format_id)s|ABR=%(abr)s|ACODEC=%(acodec)s",
         "--print", "__FILE__=%(after_move:filepath)s",
@@ -404,10 +492,31 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
     logger.info("yt-dlp download starting: %s → %s", title, dest)
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=PIPE, stderr=PIPE)
-        stdout, stderr = await proc.communicate()
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
 
-        stdout_text = stdout.decode(errors="replace")
-        if proc.returncode == 0:
+        async def _consume_stdout() -> None:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                stdout_parts.append(line.decode(errors="replace"))
+
+        async def _consume_stderr() -> None:
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode(errors="replace")
+                stderr_parts.append(text)
+                _update_progress_from_line(state, text)
+
+        await asyncio.gather(_consume_stdout(), _consume_stderr())
+        rc = await proc.wait()
+
+        stdout_text = "".join(stdout_parts)
+        stderr_text = "".join(stderr_parts)
+        if rc == 0:
             parsed = _parse_printed_download_info(stdout_text)
             state["source_format_id"] = parsed.get("format")
             state["source_abr_kbps"] = round(float(parsed["abr"]), 1) if parsed.get("abr") not in (None, "NA") else None
@@ -422,6 +531,8 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
                 state.update(await _probe_audio_file(state["saved_to"]))
                 state.update(await enrich_youtube_opus(state["saved_to"], title, uploader, url))
             state["status"] = "done"
+            state["progress_percent"] = 100.0
+            state["updated_at"] = time.time()
             logger.info("yt-dlp done: %s", title)
             try:
                 await navidrome.trigger_scan()
@@ -429,14 +540,16 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
                 logger.warning("Navidrome scan failed after yt-dlp download: %s", e)
             await send_telegram_message(f"{title} finished downloading. Navidrome scan was triggered.")
         else:
-            err = stderr.decode(errors="replace")[-500:]
+            err = stderr_text[-500:]
             state["status"] = "failed"
             state["error"] = err
-            logger.error("yt-dlp failed (rc=%d): %s", proc.returncode, err)
+            state["updated_at"] = time.time()
+            logger.error("yt-dlp failed (rc=%d): %s", rc, err)
 
     except Exception as e:
         state["status"] = "failed"
         state["error"] = str(e)
+        state["updated_at"] = time.time()
         logger.error("yt-dlp exception: %s", e)
 
 
@@ -545,6 +658,12 @@ async def youtube_download(req: DownloadRequest, _: str = Depends(_require_api_k
         "title":    title,
         "language": lang,
         "error":    None,
+        "progress_percent": 0.0,
+        "bytes_done": None,
+        "bytes_total": None,
+        "speed_bytes_per_second": None,
+        "eta_seconds": None,
+        "updated_at": time.time(),
         "source_format_id": None,
         "source_abr_kbps": None,
         "source_acodec": None,

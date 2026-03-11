@@ -98,6 +98,21 @@ Response:
 - `status` — `"starting"` | `"downloading"` | `"enriching"` | `"done"`
 - `language` — destination language
 - `peer` — Soulseek peer
+- progress fields when available:
+  - `progress_percent`
+  - `bytes_done`
+  - `bytes_total`
+  - `speed_bytes_per_second`
+  - `eta_seconds`
+  - `files_done`
+  - `files_total`
+
+### Unified jobs view
+```http
+GET $MEDIA_API_URL/jobs?pipeline=music
+```
+
+Use this when Sam asks for cross-pipeline progress or `show current jobs`.
 
 ---
 

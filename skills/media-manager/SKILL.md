@@ -43,6 +43,7 @@ When this skill is active, Raven should:
 2. Choose the right pipeline
 - Route to the existing implementation skill instead of inventing a new path.
 - Reuse the already validated API endpoints and helper scripts.
+- When Sam asks for cross-pipeline progress, prefer the unified jobs API instead of guessing from memory.
 
 3. Verify before reporting success
 - Confirm the file/library state at the destination.
@@ -93,6 +94,7 @@ When this skill is active, Raven should:
 - Prefer exact-URL resolution when Sam provides a direct URL.
 - Report actual source format/bitrate when available.
 - Keep YouTube thumbnail only when stronger art lookup fails.
+- For live progress, use the unified jobs view or `/youtube/status/{download_id}` progress fields.
 
 ### Radio / AzuraCast
 - Use `radio` or `radio-audio-import`.
@@ -157,3 +159,16 @@ Proceed without asking when:
 - verifying runtime health
 - syncing validated tracked repo changes to VPS and GitHub
 - letting the pipeline send its automatic completion notification after a verified success state
+
+## Unified Progress
+
+When Sam asks:
+- `show current jobs`
+- `show download progress`
+- `what is still running`
+
+Use the unified jobs API first. It currently covers:
+- `music`
+- `youtube`
+
+Movie/Torrent progress remains best viewed through qBittorrent until that pipeline is normalized into the same backend model.
