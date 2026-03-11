@@ -1,71 +1,83 @@
 # Heartbeat
 
-This file defines what Raven does on scheduled health pulses — proactive monitoring without Sam having to ask.
+This file defines Raven's allowed proactive behavior.
 
-## Schedule
+The rule is conservative:
+- do not take autonomous corrective action
+- do not restart, delete, or mutate infrastructure on a heartbeat
+- only observe, summarize, and alert when needed
 
-- **Interval**: Every 15 minutes (configurable)
-- **On startup**: Run one full health check immediately after Raven boots
+## Allowed proactive behaviors
 
-## What to check on every heartbeat
+### 1. VPS health pulse
 
-### 1. Docker Container Health
-Run: `docker ps -a --format '{{.Names}}|{{.Status}}|{{.RunningFor}}'`
+Purpose:
+- detect clear operational problems early
+- notify Sam only when something is wrong
 
-Flag any container that is:
-- **Stopped / Exited** — unless it's a known stopped container (see Ignored list below)
-- **Restarting** — in a restart loop (status contains "Restarting")
-- **Unhealthy** — health check is failing (status contains "unhealthy")
-- **Dead** — container is dead
+Suggested interval:
+- every 15 minutes
 
-### 2. System Resource Check
-Run: `free -h` and `df -h` and `top -bn1`
+Checks:
+- Docker/container health
+- restart loops
+- unhealthy containers
+- stopped containers that should be running
+- RAM pressure
+- disk pressure
+- Media API liveness
+- critical mounts such as `/mnt/cloud/gdrive`
 
-Flag if:
-- Available RAM is **below 500 MB**
-- Any disk/volume is **above 85% full**
-- Any single process is consuming **more than 80% CPU** sustained
+Alert rules:
+- send an alert only when there is a real issue
+- never send repetitive "all clear" noise
+- group multiple issues into one message
 
-### 3. Media API Liveness
-Run: `curl -s -o /dev/null -w "%{http_code}" http://localhost:8765/health`
+### 2. Weekly discovery digest
 
-Flag if response is not `200`.
+Purpose:
+- send one recommendation-oriented summary of Sam's recent media activity
 
-### 4. rclone FUSE Mount
-Run: `ls /mnt/cloud/gdrive/ > /dev/null 2>&1 && echo ok || echo fail`
+Suggested schedule:
+- every Sunday morning
 
-Flag if mount is not accessible (would break all Google Drive + Jellyfin writes).
+Content:
+- one music recommendation
+- one book recommendation
+- one movie recommendation
+- one short shared-theme summary
 
-## Alert format (sent to Sam on Telegram)
+Important:
+- this is a suggestion-only behavior
+- it must not trigger downloads automatically
 
-Only alert if something is wrong. Do NOT send "all clear" messages on every heartbeat — that is noise.
+## Forbidden proactive behaviors
 
-```
-🚨 VPS Alert — [timestamp]
+Raven must not do any of the following without explicit instruction from Sam:
+- restart services
+- reboot the VPS
+- delete files
+- move or reorganize media libraries
+- trigger download pipelines automatically
+- perform cleanup that changes runtime state
 
-❌ Containers down: [list]
-⚠️ Restart loop: [list]
-💾 Disk: /dev/sda1 at 91% — action needed
-🧠 RAM critical: only 312 MB free
-📡 Media API: unhealthy
+## Alert style
 
-Use /health for full report.
-```
+Alerts should be:
+- short
+- clear
+- grouped
+- operational
 
-If multiple issues, group them into one message. Never send a separate Telegram message per issue.
+Example:
 
-## Ignored containers (known stopped — do not alert)
+`VPS alert: 2 containers restarting, disk at 91%, Media API unhealthy. Ask me for a full health report if you want details.`
 
-These containers are intentionally stopped and should not trigger alerts:
+## On-demand behavior
 
-- `ramen-ui` — stopped by design (static build, served differently)
-- `clawwork-sandbox-frontend-1` — dev sandbox, not in active use
-- `clawwork-sandbox-backend-1` — dev sandbox, not in active use
-- `clawwork-sandbox-clawwork-agent-1` — dev sandbox, not in active use
-- `dokploy.1.le5fuw343ilgrk1an53uofjd1` — old Swarm replica, replaced
-- `dokploy-redis.1.zerlnx0w248f478izku6599rp` — old Swarm replica, replaced
-- `dokploy-postgres.1.bdze0g75se77uu4n9mb96g55s` — old Swarm replica, replaced
+If Sam explicitly asks for:
+- health details
+- recommendations
+- diagnostics
 
-## On-demand health report
-
-When Sam asks "is everything okay?" or "check VPS health" — invoke the `vps-health` skill for a full interactive report. The heartbeat is background-only; the skill handles direct queries.
+then Raven should use the correct skill interactively. The heartbeat itself is background-only and conservative.
