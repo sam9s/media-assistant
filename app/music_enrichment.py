@@ -199,6 +199,58 @@ def _read_track_hints(flac_path: Path) -> dict:
     }
 
 
+def _guess_artist_title(value: str) -> tuple[str, str]:
+    text = (value or "").strip()
+    if not text:
+        return "", ""
+    separators = [" - ", " – ", " — ", "_-_"]
+    for sep in separators:
+        if sep in text:
+            left, right = text.split(sep, 1)
+            artist = left.strip(" -_")
+            title = right.strip(" -_")
+            if artist and title:
+                return artist, title
+    return "", text
+
+
+def _guess_album_year_from_parent(parent: Path) -> tuple[str, str]:
+    name = parent.name.strip()
+    year = ""
+    album = name
+    m = re.match(r"^(?P<year>(19|20)\d{2})\s*[-_]\s*(?P<album>.+)$", name)
+    if m:
+        year = m.group("year")
+        album = m.group("album").strip()
+    return album, year
+
+
+def _write_track_tags(
+    flac_path: str,
+    *,
+    artist: str,
+    title: str,
+    album: str = "",
+    albumartist: str = "",
+    year: str = "",
+) -> None:
+    try:
+        audio = FLAC(flac_path)
+        if artist:
+            audio["artist"] = [artist]
+        if title:
+            audio["title"] = [title]
+        if album:
+            audio["album"] = [album]
+        if albumartist:
+            audio["albumartist"] = [albumartist]
+        if year:
+            audio["date"] = [year]
+        audio.save()
+    except Exception as e:
+        logger.warning("Track tag write failed for %s: %s", flac_path, e)
+
+
 def _find_existing_album_dir(dest_root: Path, artist: str, album: str) -> Optional[Path]:
     want_album = _norm_text(album)
     want_artist = _norm_text(artist)
@@ -604,15 +656,24 @@ async def enrich_single_track(
         meta = await asyncio.to_thread(_mb_recording_meta, recording_id)
 
     tag_hints = _read_track_hints(file)
+    parsed_artist = ""
+    parsed_title = ""
+    for candidate in (title_hint, file.stem):
+        parsed_artist, parsed_title = _guess_artist_title(candidate)
+        if parsed_artist and parsed_title:
+            break
 
-    artist = (meta or {}).get("artist") or artist_hint or tag_hints.get("artist") or "Unknown Artist"
-    title  = (meta or {}).get("title")  or title_hint  or tag_hints.get("title") or file.stem
+    artist = (meta or {}).get("artist") or tag_hints.get("artist") or parsed_artist or artist_hint or "Unknown Artist"
+    title  = (meta or {}).get("title")  or tag_hints.get("title") or parsed_title or title_hint or file.stem
+    album_hint_from_parent, year_hint_from_parent = _guess_album_year_from_parent(file.parent)
+    album = album_hint_from_parent if album_hint_from_parent and album_hint_from_parent != file.parent.name else ""
+    year = year_hint_from_parent
     resolved_language = language.lower()
     if resolved_language == "auto":
         resolved_language = await _detect_track_language(file, artist, title, artist_hint, title_hint)
     dest_root = LANGUAGE_DIRS.get(resolved_language, LANGUAGE_DIRS["english"])
 
-    logger.info("Track enrichment metadata: artist=%r title=%r", artist, title)
+    logger.info("Track enrichment metadata: artist=%r title=%r album=%r year=%r", artist, title, album, year)
 
     existing_file = _single_track_exists(Path(dest_root), artist, title, language)
     if existing_file and not replace_existing:
@@ -629,10 +690,21 @@ async def enrich_single_track(
     # --- Step 3: Fetch cover art ---
     cover_bytes = None
     cover_url = await _theaudiodb_track_cover(artist, title)
+    if not cover_url and album:
+        cover_url = await _theaudiodb_cover(artist, album)
     if cover_url:
         cover_bytes = await _fetch_bytes(cover_url)
 
-    # --- Step 4: Embed cover into FLAC ---
+    # --- Step 4: Write core tags and embed cover into FLAC ---
+    await asyncio.to_thread(
+        _write_track_tags,
+        flac_path,
+        artist=artist,
+        title=title,
+        album=album,
+        albumartist=artist,
+        year=year,
+    )
     if cover_bytes:
         await asyncio.to_thread(_embed_cover_into_flac, flac_path, cover_bytes)
 
@@ -649,7 +721,7 @@ async def enrich_single_track(
     # --- Step 6: Determine destination directory ---
     # Punjabi single tracks go directly into Punjabi/ (no Misc subfolder).
     # English and Hindi single tracks always go into {language}/Misc/.
-    if language.lower() == "punjabi":
+    if resolved_language == "punjabi":
         dest_dir = Path(dest_root)
     else:
         dest_dir = Path(dest_root) / "Misc"
