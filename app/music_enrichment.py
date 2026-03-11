@@ -31,7 +31,7 @@ import musicbrainzngs
 from mutagen.flac import FLAC, Picture
 
 from app.config import settings
-from app.navidrome import search_album, trigger_scan
+from app.navidrome import detect_stale_entries, search_album, trigger_scan
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -453,6 +453,7 @@ async def enrich_and_deliver(
     logger.info("Enrichment started: %s → %s", download_folder, language)
 
     folder = Path(download_folder)
+    old_flac_paths = [str(p) for p in sorted(folder.rglob("*.flac"))]
 
     if not folder.exists():
         logger.error("Enrichment: download folder not found: %s", download_folder)
@@ -579,7 +580,24 @@ async def enrich_and_deliver(
     # --- Step 9: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan: %s", scan_result)
-    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result, "language": resolved_language}
+    await asyncio.sleep(5)
+    stale = await detect_stale_entries(old_flac_paths)
+    message = None
+    if stale.get("stale_found"):
+        message = (
+            f"Navidrome stale-entry check found {len(stale.get('stale_media') or [])} missing old track(s), "
+            f"{len(stale.get('orphan_albums') or [])} orphan album row(s), "
+            f"{len(stale.get('orphan_artists') or [])} orphan artist row(s). Cleanup review is recommended."
+        )
+    return {
+        "success": True,
+        "duplicate": False,
+        "destination": str(dest),
+        "scan": scan_result,
+        "language": resolved_language,
+        "stale_check": stale,
+        "message": message,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +663,7 @@ async def enrich_single_track(
     logger.info("Single-track enrichment started: %s → %s/Misc", flac_path, language)
 
     file = Path(flac_path)
+    old_track_path = str(file)
     if not file.exists():
         logger.error("Track enrichment: file not found: %s", flac_path)
         return {"success": False, "message": "file not found"}
@@ -757,7 +776,24 @@ async def enrich_single_track(
     # --- Step 8: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan after track delivery: %s", scan_result)
-    return {"success": True, "duplicate": False, "destination": str(dest), "scan": scan_result, "language": resolved_language}
+    await asyncio.sleep(5)
+    stale = await detect_stale_entries([old_track_path])
+    message = None
+    if stale.get("stale_found"):
+        message = (
+            f"Navidrome stale-entry check found {len(stale.get('stale_media') or [])} missing old track(s), "
+            f"{len(stale.get('orphan_albums') or [])} orphan album row(s), "
+            f"{len(stale.get('orphan_artists') or [])} orphan artist row(s). Cleanup review is recommended."
+        )
+    return {
+        "success": True,
+        "duplicate": False,
+        "destination": str(dest),
+        "scan": scan_result,
+        "language": resolved_language,
+        "stale_check": stale,
+        "message": message,
+    }
 
 
 def _detect_hires(flac_files: list) -> bool:

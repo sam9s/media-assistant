@@ -194,6 +194,12 @@
 - Existing terminal success/failure notifications remain in place.
 - This is intentionally limited to one startup-check message plus one terminal message to avoid spam.
 
+**Project state note (2026-03-11, targeted Navidrome ghost detection for music):**
+- After music delivery and Navidrome scan trigger, the backend now runs a read-only stale-entry check against the old source path(s).
+- This detects the class of ghost rows caused by bad pre-fix tags or renamed/moved tracks that leave orphaned Navidrome DB entries behind.
+- Current behavior is detection/report only, not silent DB mutation from `sam-media-api`.
+- Raven should surface these stale-entry findings in the music completion summary so Sam can decide whether an explicit cleanup pass is needed.
+
 ---
 
 ## 1. WHAT IS BUILT

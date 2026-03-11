@@ -182,6 +182,8 @@ Ask language + pick in one message. No need for two separate prompts.
   - started successfully with real progress, or
   - queued but no progress yet, or
   - failed quickly with the exact reason.
+- After music delivery, the backend also runs a targeted Navidrome stale-entry check against the old source path(s).
+- If stale missing/orphan rows are detected, Raven should report that cleanup review is needed instead of waiting for Sam to notice ghost entries manually.
 
 9. If Sam asks for status later, call `GET /music/status/{download_id}` and report:
 ```

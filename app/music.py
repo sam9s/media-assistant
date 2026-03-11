@@ -665,11 +665,10 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     _downloads[download_id]["updated_at"] = time.time()
     _persist_music_job(download_id)
     if result.get("destination"):
-        await _send_music_notification_once(
-            download_id,
-            "terminal",
-            f"{Path(result['destination']).name} finished importing. Navidrome scan was triggered.",
-        )
+        text = f"{Path(result['destination']).name} finished importing. Navidrome scan was triggered."
+        if result.get("message"):
+            text += f" {result['message']}"
+        await _send_music_notification_once(download_id, "terminal", text)
 
 
 async def _poll_and_enrich_track(download_id: str, peer_username: str, filename: str) -> None:
@@ -820,11 +819,10 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     _downloads[download_id]["updated_at"] = time.time()
     _persist_music_job(download_id)
     if result.get("destination"):
-        await _send_music_notification_once(
-            download_id,
-            "terminal",
-            f"{Path(result['destination']).stem} finished importing. Navidrome scan was triggered.",
-        )
+        text = f"{Path(result['destination']).stem} finished importing. Navidrome scan was triggered."
+        if result.get("message"):
+            text += f" {result['message']}"
+        await _send_music_notification_once(download_id, "terminal", text)
 
 
 async def _run_manual_import(download_id: str, source_path: str, language: str, mode: str, replace_existing: bool = False) -> None:
@@ -855,11 +853,10 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
         _downloads[download_id]["updated_at"] = time.time()
         _persist_music_job(download_id)
         if result.get("success") and result.get("destination"):
-            await _send_music_notification_once(
-                download_id,
-                "terminal",
-                f"{Path(result['destination']).name} manual music import finished. Navidrome scan was triggered.",
-            )
+            text = f"{Path(result['destination']).name} manual music import finished. Navidrome scan was triggered."
+            if result.get("message"):
+                text += f" {result['message']}"
+            await _send_music_notification_once(download_id, "terminal", text)
         elif not result.get("success"):
             await _send_music_notification_once(
                 download_id,

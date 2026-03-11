@@ -178,3 +178,4 @@ Important:
 - Terminal failures should be treated as real outcomes, not guessed as "aged out".
 - When a job is `failed` or `stuck`, report the exact stored reason back to Sam.
 - Music and YouTube also emit one early startup-check notification after launch so Sam does not need to wait blindly for the first sign of movement.
+- For music imports/downloads, Raven should also surface targeted Navidrome stale-entry warnings tied to the just-processed item, instead of waiting for Sam to discover ghost entries manually in the UI.
