@@ -157,6 +157,17 @@
   - Next required input: fresh Telegram bot token for the clean Raven deployment
   - Recommendation: rotate any previously used bot/gateway tokens rather than reusing the old OpenClaw-era secrets
 
+**Project state note (2026-03-11, proactive completion notifications):**
+- `sam-media-api` now supports Telegram completion notifications for successful pipeline events using Raven's bot token/chat.
+- Current wiring:
+  - movie/TV complete webhook -> best-effort Jellyfin availability check -> notify Sam
+  - librarian download -> best-effort Kavita availability check -> notify Sam
+  - music / YouTube import success -> notify Sam after successful delivery with Navidrome scan context
+  - radio upload success -> notify Sam
+  - photos upload success -> notify Sam
+- This is event-driven, not timer-based.
+- Raven does not need to sleep/poll manually for these completions anymore.
+
 ---
 
 ## 1. WHAT IS BUILT

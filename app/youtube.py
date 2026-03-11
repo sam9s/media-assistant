@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from app import navidrome
 from app.config import settings
+from app.notifications import send_telegram_message
 from app.youtube_enrichment import enrich_youtube_opus
 
 logger = logging.getLogger("uvicorn.error")
@@ -426,6 +427,7 @@ async def _yt_download_task(download_id: str, url: str, title: str, uploader: st
                 await navidrome.trigger_scan()
             except Exception as e:
                 logger.warning("Navidrome scan failed after yt-dlp download: %s", e)
+            await send_telegram_message(f"{title} finished downloading. Navidrome scan was triggered.")
         else:
             err = stderr.decode(errors="replace")[-500:]
             state["status"] = "failed"

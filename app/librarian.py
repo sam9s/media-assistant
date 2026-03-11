@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.kavita import KavitaClient
+from app.notifications import send_telegram_message, wait_for_condition
 from app.sources.archive_org import search_archive_org
 from app.sources.annas_archive import resolve_annas_download, search_annas_archive
 from app.sources.gutendex import search_gutendex
@@ -373,6 +374,21 @@ async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_k
         scan_error = str(exc)
         logger.warning("Kavita scan failed after download: %s", exc)
 
+    kavita_available = False
+    if scan_triggered:
+        kavita_available = await wait_for_condition(
+            lambda: kavita.is_in_library(req.title),
+            attempts=18,
+            interval_seconds=5,
+        )
+
+    if kavita_available:
+        await send_telegram_message(f"{req.title} is now available in Kavita.")
+    else:
+        await send_telegram_message(
+            f"{req.title} downloaded successfully. Kavita scan was triggered and it should appear shortly."
+        )
+
     return {
         "success": True,
         "message": f"'{req.title}' downloaded successfully",
@@ -383,6 +399,7 @@ async def download_book(req: BookDownloadRequest, _: str = Depends(require_api_k
         "kavita_safe": kavita_safe,
         "scan_triggered": scan_triggered,
         "scan_error": scan_error,
+        "kavita_available": kavita_available,
     }
 
 

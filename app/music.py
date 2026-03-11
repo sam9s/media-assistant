@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.music_enrichment import enrich_and_deliver, enrich_single_track
+from app.notifications import send_telegram_message
 from app.navidrome import search_album as navidrome_search
 
 logger = logging.getLogger("uvicorn.error")
@@ -533,6 +534,8 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     if result.get("message"):
         _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
+    if result.get("destination"):
+        await send_telegram_message(f"{Path(result['destination']).name} finished importing. Navidrome scan was triggered.")
 
 
 async def _poll_and_enrich_track(download_id: str, peer_username: str, filename: str) -> None:
@@ -642,6 +645,8 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     if result.get("message"):
         _downloads[download_id]["message"] = result["message"]
     _downloads[download_id]["status"] = "done"
+    if result.get("destination"):
+        await send_telegram_message(f"{Path(result['destination']).stem} finished importing. Navidrome scan was triggered.")
 
 
 async def _run_manual_import(download_id: str, source_path: str, language: str, mode: str, replace_existing: bool = False) -> None:
@@ -666,6 +671,10 @@ async def _run_manual_import(download_id: str, source_path: str, language: str, 
             _downloads[download_id]["message"] = result["message"]
         if result.get("duplicate"):
             _downloads[download_id]["duplicate"] = True
+        if result.get("success") and result.get("destination"):
+            await send_telegram_message(
+                f"{Path(result['destination']).name} manual music import finished. Navidrome scan was triggered."
+            )
     except Exception as exc:
         logger.exception("Manual import failed for %s", source_path)
         _downloads[download_id]["status"] = "failed"

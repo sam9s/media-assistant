@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Security, Upl
 from fastapi.security.api_key import APIKeyHeader
 
 from app.config import settings
+from app.notifications import send_telegram_message
 
 router = APIRouter(prefix="/radio", tags=["radio"])
 
@@ -224,6 +225,7 @@ async def radio_upload(
     created_record = created[-1]
 
     size_bytes = len(file_bytes)
+    await send_telegram_message(f"{dest_name} is now in Raven Radio.")
     return {
         "success": True,
         "saved_to": f"{settings.RADIO_LIBRARY_PATH.rstrip('/')}/{target_path}",

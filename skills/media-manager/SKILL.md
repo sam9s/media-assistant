@@ -52,6 +52,7 @@ When this skill is active, Raven should:
   - API accepted
   - background job completed
   - library/UI visibility confirmed
+- When a supported pipeline finishes successfully, expect an automatic Telegram completion notification to Sam from the media API layer.
 
 4. Prefer targeted operations over broad reruns
 - If only leftovers remain, import only leftovers.
@@ -155,3 +156,4 @@ Proceed without asking when:
 - retrying a failed targeted import that already timed out once
 - verifying runtime health
 - syncing validated tracked repo changes to VPS and GitHub
+- letting the pipeline send its automatic completion notification after a verified success state

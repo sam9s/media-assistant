@@ -24,6 +24,7 @@ from app.jackett import search_jackett
 from app.jellyfin import JellyfinClient
 from app.librarian import router as librarian_router
 from app.music import router as music_router
+from app.notifications import send_telegram_message, wait_for_condition
 from app.photos import router as photos_router
 from app.radio import router as radio_router
 from app.recommendations import router as recommendations_router
@@ -910,10 +911,31 @@ async def on_complete(request: Request, _: str = Depends(require_api_key)):
     except Exception:
         pass
 
+    jellyfin_available = False
+    if jf_refreshed:
+        async def _jellyfin_ready() -> bool:
+            match = await jellyfin.search(title)
+            if not match.get("found"):
+                return False
+            if year and match.get("year") and int(match.get("year")) != int(year):
+                return False
+            return True
+
+        jellyfin_available = await wait_for_condition(_jellyfin_ready, attempts=18, interval_seconds=5)
+
+    if renamed:
+        if jellyfin_available:
+            await send_telegram_message(f"{clean}{suffix} is now available in Jellyfin.")
+        else:
+            await send_telegram_message(
+                f"{clean}{suffix} finished processing. Jellyfin refresh was triggered and it should appear shortly."
+            )
+
     return {
         "renamed": renamed,
         "subtitle": None,
         "jellyfin_refreshed": jf_refreshed,
+        "jellyfin_available": jellyfin_available,
         "original_release_name": original_release_name,
     }
 

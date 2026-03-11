@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     OPEN_LIBRARY_BASE_URL: str = "https://openlibrary.org"
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+    RAVEN_NOTIFICATIONS_ENABLED: bool = False
+    RAVEN_TELEGRAM_BOT_TOKEN: str = ""
+    RAVEN_TELEGRAM_CHAT_ID: str = ""
 
     # YouTube Opus Maven — comma-separated public playlist URLs to search first.
     # Leave blank to skip playlist search and go straight to YouTube search.

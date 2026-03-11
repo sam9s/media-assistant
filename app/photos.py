@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.immich import ImmichClient
+from app.notifications import send_telegram_message
 
 router = APIRouter(prefix="/photos", tags=["photos"])
 
@@ -258,6 +259,10 @@ async def upload_photo(
         raise HTTPException(status_code=502, detail=f"Immich upload failed: {exc.response.status_code} {exc.response.text[:300]}")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Immich upload failed: {exc}")
+
+    await send_telegram_message(
+        f"{safe_name} uploaded to Immich{f' and added to album {album_name}' if album_name else ''}."
+    )
 
     return {
         "success": True,
