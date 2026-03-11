@@ -144,12 +144,16 @@ async def _maybe_send_youtube_progress_confirm(download_id: str) -> None:
         return
     bytes_done = info.get("bytes_done") or 0
     progress = info.get("progress_percent")
-    if bytes_done <= 0 and progress in (None, 0, 0.0):
+    speed = info.get("speed_bytes_per_second") or 0
+    meaningful_transfer = (
+        bytes_done >= 5 * 1024 * 1024
+        or (progress is not None and progress >= 1.0)
+    )
+    if not meaningful_transfer or speed <= 0:
         return
 
     title = info.get("title") or "YouTube download"
     bytes_total = info.get("bytes_total")
-    speed = info.get("speed_bytes_per_second")
     eta = info.get("eta_seconds")
 
     parts = [f"{title} is now transferring normally."]

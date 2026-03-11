@@ -159,16 +159,21 @@ async def _maybe_send_music_progress_confirm(download_id: str) -> None:
     info = _downloads.get(download_id)
     if not info or info.get("progress_notification_sent") or info.get("terminal_notification_sent"):
         return
-    if (info.get("bytes_done") or 0) <= 0 and (info.get("files_done") or 0) <= 0:
+    bytes_done = info.get("bytes_done") or 0
+    files_done = info.get("files_done") or 0
+    progress = info.get("progress_percent")
+    speed = info.get("speed_bytes_per_second") or 0
+    meaningful_transfer = (
+        bytes_done >= 5 * 1024 * 1024
+        or files_done >= 1
+        or (progress is not None and progress >= 1.0)
+    )
+    if not meaningful_transfer or speed <= 0:
         return
 
     title = _music_title(info)
-    progress = info.get("progress_percent")
-    bytes_done = info.get("bytes_done") or 0
     bytes_total = info.get("bytes_total")
-    speed = info.get("speed_bytes_per_second")
     eta = info.get("eta_seconds")
-    files_done = info.get("files_done")
     files_total = info.get("files_total")
 
     parts = [f"{title} is now transferring normally."]

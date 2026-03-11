@@ -192,6 +192,7 @@
   - the job is queued but no progress is visible yet
   - the job failed quickly with the exact reason
 - If a job initially shows queued/no-progress and later starts transferring real bytes, one additional bounded progress-confirmation notification is sent.
+- That mid-flight confirmation is now gated on meaningful movement only (at least one file done, or >= 5 MB transferred, or >= 1% progress, with non-zero speed) so Raven does not send useless 0 MB / 0 MBps updates.
 - Late startup-check messages are suppressed once a real transfer-confirmation has already been sent.
 - Album duplicate-safe outcomes now still emit a terminal Telegram message instead of silently finishing after enrichment.
 - Existing terminal success/failure notifications remain in place.
