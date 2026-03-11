@@ -18,6 +18,7 @@ Flow:
 
 import asyncio
 import json
+import hashlib
 import logging
 import os
 import re
@@ -32,7 +33,7 @@ import musicbrainzngs
 from mutagen.flac import FLAC, Picture
 
 from app.config import settings
-from app.navidrome import detect_stale_entries, search_album, trigger_scan
+from app.navidrome import detect_stale_entries, trigger_scan
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -89,6 +90,18 @@ def _backup_existing_path(path: Path) -> Path:
         counter += 1
     shutil.move(str(path), str(target))
     return target
+
+
+def _remove_path_quietly(path: Path) -> None:
+    try:
+        if not path.exists():
+            return
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except Exception as e:
+        logger.warning("Cleanup failed for %s: %s", path, e)
 
 
 def _norm_text(value: str) -> str:
@@ -274,6 +287,45 @@ def _find_existing_album_dir(dest_root: Path, artist: str, album: str) -> Option
         if want_artist == "variousartists" or existing_artist == "variousartists":
             return child
     return None
+
+
+def _file_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _album_signature(root: Path) -> dict[str, str]:
+    signature: dict[str, str] = {}
+    for flac in sorted(root.rglob("*.flac")):
+        rel = flac.relative_to(root).as_posix().lower()
+        signature[rel] = _file_md5(flac)
+    return signature
+
+
+def _albums_are_exact_duplicates(source_root: Path, existing_root: Path) -> bool:
+    if not source_root.exists() or not existing_root.exists():
+        return False
+    source_sig = _album_signature(source_root)
+    existing_sig = _album_signature(existing_root)
+    return bool(source_sig) and source_sig == existing_sig
+
+
+def _unique_album_destination(dest_root: Path, folder_name: str) -> Path:
+    base = dest_root / folder_name
+    if not base.exists():
+        return base
+    counter = 2
+    while True:
+        candidate = dest_root / f"{folder_name} [{counter}]"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def _single_track_exists(dest_root: Path, artist: str, title: str, language: str) -> Optional[Path]:
@@ -513,21 +565,28 @@ async def enrich_and_deliver(
     logger.info("Enrichment metadata: artist=%r album=%r year=%r hires=%s", artist, album, year, is_hires)
 
     existing_dir = _find_existing_album_dir(Path(dest_root), artist, album)
-    navidrome_exists = await search_album(artist, album)
     year_part = f" ({year})" if year else ""
     folder_name = _safe_name(f"{artist} - {album}{year_part} [{quality_tag}]")
-    dest = Path(dest_root) / folder_name
+    dest_root_path = Path(dest_root)
+    dest = dest_root_path / folder_name
 
-    if (existing_dir or navidrome_exists) and not replace_existing:
-        message = f"Album already exists: {existing_dir or f'Navidrome:{artist} - {album}'}"
-        logger.info("Album duplicate detected, skipping manual delivery: %s", message)
-        return {
-            "success": True,
-            "duplicate": True,
-            "message": message,
-            "destination": str(existing_dir) if existing_dir else "",
-            "language": resolved_language,
-        }
+    if existing_dir and not replace_existing:
+        if _albums_are_exact_duplicates(album_root, existing_dir):
+            message = f"Exact duplicate album already exists: {existing_dir}"
+            logger.info("Album duplicate detected via file signature, skipping delivery: %s", message)
+            _remove_path_quietly(album_root)
+            return {
+                "success": True,
+                "duplicate": True,
+                "message": message,
+                "destination": str(existing_dir),
+                "language": resolved_language,
+            }
+        logger.info(
+            "Album metadata matched existing folder but file signatures differ; treating as distinct edition: %s",
+            existing_dir,
+        )
+        dest = _unique_album_destination(dest_root_path, folder_name)
 
     if replace_existing and existing_dir and existing_dir != dest and dest.exists():
         backup = _backup_existing_path(existing_dir)
@@ -586,14 +645,19 @@ async def enrich_and_deliver(
             logger.info("Album upgrade backed up destination folder %s -> %s", dest, backup)
 
         if dest.exists():
-            logger.warning("Destination already exists, skipping move: %s", dest)
-            return {
-                "success": True,
-                "duplicate": True,
-                "message": f"Destination already exists: {dest}",
-                "destination": str(dest),
-                "language": resolved_language,
-            }
+            if _albums_are_exact_duplicates(delivery_root, dest):
+                logger.warning("Destination already exists with exact matching files, skipping move: %s", dest)
+                _remove_path_quietly(delivery_root)
+                return {
+                    "success": True,
+                    "duplicate": True,
+                    "message": f"Exact duplicate album already exists: {dest}",
+                    "destination": str(dest),
+                    "language": resolved_language,
+                }
+            unique_dest = _unique_album_destination(dest_root_path, folder_name)
+            logger.info("Destination %s already exists with different files; using %s", dest, unique_dest)
+            dest = unique_dest
 
         shutil.move(str(delivery_root), str(dest))
         logger.info("Enrichment delivered: %s", dest)

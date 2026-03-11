@@ -209,6 +209,12 @@
 - If fingerprinting fails, music enrichment falls back cleanly to filename/tag-based metadata instead of leaving the job stuck in `enriching`.
 - Music enrichment calls are now wrapped so unexpected enrichment crashes still land in a terminal failed state with a notification.
 
+**Project state note (2026-03-11, album duplicate handling hardening):**
+- Album duplicate detection no longer hard-skips on artist/album metadata or a Navidrome search hit alone.
+- For albums, duplicate handling now requires filesystem-level FLAC track-set comparison using per-file MD5 hashes.
+- If metadata matches but file signatures differ, the album is treated as a distinct edition and is delivered to a unique destination folder instead of being skipped.
+- If an album is proven to be an exact duplicate, the temporary download folder is cleaned up automatically so `Music/Downloads` does not retain residue.
+
 ---
 
 ## 1. WHAT IS BUILT
