@@ -161,6 +161,7 @@ async def _maybe_send_music_progress_confirm(download_id: str) -> None:
     if not info or info.get("progress_notification_sent") or info.get("terminal_notification_sent"):
         return
     bytes_done = info.get("bytes_done") or 0
+    files_done = info.get("files_done") or 0
     progress = info.get("progress_percent")
     speed = info.get("speed_bytes_per_second") or 0
     meaningful_transfer = _has_meaningful_music_transfer(info)
