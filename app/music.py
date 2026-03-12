@@ -38,6 +38,7 @@ logger = logging.getLogger("uvicorn.error")
 # Stuck-peer detection timeouts
 _STUCK_NO_START_SECS = 600   # 10 min with 0 bytes → peer unresponsive → cancel
 _STUCK_STALL_SECS    = 300   # 5 min since last byte → transfer stalled → cancel
+_CHAINED_RETRY_NO_START_SECS = 90  # shorter no-progress cutoff when Sam approved fallback peers
 
 router = APIRouter(prefix="/music", tags=["music"])
 
@@ -224,6 +225,11 @@ def _has_meaningful_music_transfer(info: dict) -> bool:
         or files_done >= 1
         or (progress is not None and progress >= 1.0)
     )
+
+
+def _music_no_start_timeout(info: dict) -> int:
+    queue = info.get("candidate_queue") or []
+    return _CHAINED_RETRY_NO_START_SECS if len(queue) > 1 else _STUCK_NO_START_SECS
 
 
 async def _activate_music_candidate(download_id: str, candidate: dict) -> None:
@@ -702,10 +708,11 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                 _last_bytes = _cur_total_bytes
                 _last_progress = _now
             if not (completed or failed):
-                no_start = (_last_bytes == 0) and ((_now - _start) >= _STUCK_NO_START_SECS)
+                no_start_timeout = _music_no_start_timeout(_downloads[download_id])
+                no_start = (_last_bytes == 0) and ((_now - _start) >= no_start_timeout)
                 stalled  = (_last_bytes > 0)  and ((_now - _last_progress) >= _STUCK_STALL_SECS)
                 if no_start or stalled:
-                    reason = "unresponsive for 10 minutes" if no_start else "stalled for 5 minutes"
+                    reason = f"unresponsive for {int(no_start_timeout / 60)} minute(s)" if no_start else "stalled for 5 minutes"
                     logger.warning("Album %s: peer %s %s — cancelling", download_id, peer_username, reason)
                     for tid in _transfer_ids.values():
                         await _slskd_cancel_download(peer_username, tid)
@@ -888,10 +895,11 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                 _last_bytes = _cur_bytes
                 _last_progress = _now
             if not (completed or failed):
-                no_start = (_last_bytes == 0) and ((_now - _start) >= _STUCK_NO_START_SECS)
+                no_start_timeout = _music_no_start_timeout(_downloads[download_id])
+                no_start = (_last_bytes == 0) and ((_now - _start) >= no_start_timeout)
                 stalled  = (_last_bytes > 0)  and ((_now - _last_progress) >= _STUCK_STALL_SECS)
                 if no_start or stalled:
-                    reason = "unresponsive for 10 minutes" if no_start else "stalled for 5 minutes"
+                    reason = f"unresponsive for {int(no_start_timeout / 60)} minute(s)" if no_start else "stalled for 5 minutes"
                     logger.warning("Track %s: peer %s %s — cancelling", download_id, peer_username, reason)
                     if _transfer_id is not None:
                         await _slskd_cancel_download(peer_username, _transfer_id)

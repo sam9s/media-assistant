@@ -203,6 +203,7 @@
   - primary `result_index`
   - optional ordered `fallback_result_indices`
 - Raven may automatically advance to the next approved peer only when the current peer fails before meaningful transfer begins.
+- For approved retry chains, the no-progress cutoff is intentionally much shorter than the normal 10-minute stuck timeout so Raven does not sit in zero-byte limbo before trying the next approved peer.
 - Once a peer shows real transfer, Raven stops switching peers and lets that attempt complete naturally.
 - If all approved peers fail, the final music failure report should include the exact stored reason instead of asking Sam to manually restart the same process one peer at a time.
 
