@@ -198,6 +198,14 @@
 - Existing terminal success/failure notifications remain in place.
 - This is intentionally limited to one startup-check message, one real-transfer confirmation, and one terminal message to avoid spam.
 
+**Project state note (2026-03-12, music auto-fallback retries):**
+- Music downloads now support a bounded approved retry chain:
+  - primary `result_index`
+  - optional ordered `fallback_result_indices`
+- Raven may automatically advance to the next approved peer only when the current peer fails before meaningful transfer begins.
+- Once a peer shows real transfer, Raven stops switching peers and lets that attempt complete naturally.
+- If all approved peers fail, the final music failure report should include the exact stored reason instead of asking Sam to manually restart the same process one peer at a time.
+
 **Project state note (2026-03-11, targeted Navidrome ghost detection for music):**
 - After music delivery and Navidrome scan trigger, the backend now runs a read-only stale-entry check against the old source path(s).
 - This detects the class of ghost rows caused by bad pre-fix tags or renamed/moved tracks that leave orphaned Navidrome DB entries behind.

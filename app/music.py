@@ -160,14 +160,9 @@ async def _maybe_send_music_progress_confirm(download_id: str) -> None:
     if not info or info.get("progress_notification_sent") or info.get("terminal_notification_sent"):
         return
     bytes_done = info.get("bytes_done") or 0
-    files_done = info.get("files_done") or 0
     progress = info.get("progress_percent")
     speed = info.get("speed_bytes_per_second") or 0
-    meaningful_transfer = (
-        bytes_done >= 5 * 1024 * 1024
-        or files_done >= 1
-        or (progress is not None and progress >= 1.0)
-    )
+    meaningful_transfer = _has_meaningful_music_transfer(info)
     if not meaningful_transfer or speed <= 0:
         return
 
@@ -213,8 +208,105 @@ def _persist_music_job(download_id: str) -> None:
             "language": info.get("language"),
             "peer": info.get("peer_username"),
             "mode": info.get("mode"),
+            "active_result_index": info.get("active_result_index"),
+            "retry_chain": [c.get("result_index") for c in (info.get("candidate_queue") or [])],
+            "attempt_history": info.get("attempt_history") or [],
         },
     )
+
+
+def _has_meaningful_music_transfer(info: dict) -> bool:
+    bytes_done = info.get("bytes_done") or 0
+    files_done = info.get("files_done") or 0
+    progress = info.get("progress_percent")
+    return (
+        bytes_done >= 5 * 1024 * 1024
+        or files_done >= 1
+        or (progress is not None and progress >= 1.0)
+    )
+
+
+async def _activate_music_candidate(download_id: str, candidate: dict) -> None:
+    info = _downloads[download_id]
+    mode = candidate["mode"]
+    info["peer_username"] = candidate["peer_username"]
+    info["mode"] = mode
+    info["attempt_number"] = candidate["attempt_number"]
+    info["active_result_index"] = candidate["result_index"]
+    info["status"] = "starting"
+    info["bytes_done"] = 0
+    info["progress_percent"] = 0.0
+    info["speed_bytes_per_second"] = None
+    info["eta_seconds"] = None
+    info["files_done"] = 0
+    info["updated_at"] = time.time()
+    info["start_notification_sent"] = False
+    info["progress_notification_sent"] = False
+
+    if mode == "track":
+        info["files"] = candidate["files"]
+        info["filename"] = candidate["filename"]
+        info["title"] = candidate.get("title", "")
+        info["artist"] = candidate.get("artist", "")
+        info["bytes_total"] = candidate["bytes_total"]
+        info["files_total"] = 1
+        _persist_music_job(download_id)
+        await _slskd_download_files(candidate["peer_username"], candidate["files"])
+        info["status"] = "downloading"
+        info["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        asyncio.create_task(_music_start_check(download_id, delay_seconds=20))
+        asyncio.create_task(_poll_and_enrich_track(download_id, candidate["peer_username"], candidate["filename"]))
+        return
+
+    info["files"] = candidate["files"]
+    info["folder_path"] = candidate["folder_path"]
+    info["artist"] = candidate.get("artist", "")
+    info["album"] = candidate.get("album", "")
+    info["bytes_total"] = candidate["bytes_total"]
+    info["files_total"] = len(candidate["files"])
+    _persist_music_job(download_id)
+    await _slskd_download_files(candidate["peer_username"], candidate["files"])
+    info["status"] = "downloading"
+    info["updated_at"] = time.time()
+    _persist_music_job(download_id)
+    asyncio.create_task(_music_start_check(download_id, delay_seconds=25))
+    asyncio.create_task(_poll_and_enrich(download_id, candidate["peer_username"], len(candidate["files"])))
+
+
+async def _try_next_music_candidate(download_id: str, failed_reason: str) -> bool:
+    info = _downloads.get(download_id)
+    if not info or _has_meaningful_music_transfer(info):
+        return False
+
+    queue = info.get("candidate_queue") or []
+    next_pos = (info.get("candidate_position") or 0) + 1
+    if next_pos >= len(queue):
+        return False
+
+    current = queue[info.get("candidate_position") or 0]
+    next_candidate = dict(queue[next_pos])
+    next_candidate["attempt_number"] = next_pos + 1
+    info["candidate_position"] = next_pos
+    info.setdefault("attempt_history", []).append(
+        {
+            "result_index": current.get("result_index"),
+            "peer": current.get("peer_username"),
+            "reason": failed_reason,
+            "failed_at": time.time(),
+        }
+    )
+    info["message"] = failed_reason
+    info["updated_at"] = time.time()
+    _persist_music_job(download_id)
+
+    title = _music_title(info)
+    await send_telegram_message(
+        f"{title} could not start with peer {current.get('peer_username')}: {failed_reason} "
+        f"Trying fallback result {next_candidate.get('result_index')} from peer {next_candidate.get('peer_username')}."
+    )
+    await _activate_music_candidate(download_id, next_candidate)
+    return True
 
 # ---------------------------------------------------------------------------
 # Models
@@ -230,6 +322,7 @@ class MusicSearchRequest(BaseModel):
 class MusicDownloadRequest(BaseModel):
     search_id: str
     result_index: int      # 1-based index from search results
+    fallback_result_indices: list[int] = []
     language: str          # "english" | "hindi" | "punjabi"
 
 
@@ -616,16 +709,17 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
                     logger.warning("Album %s: peer %s %s — cancelling", download_id, peer_username, reason)
                     for tid in _transfer_ids.values():
                         await _slskd_cancel_download(peer_username, tid)
+                    failure_message = f"Peer {peer_username} was {reason}. Download cancelled."
+                    if await _try_next_music_candidate(download_id, failure_message):
+                        return
                     _downloads[download_id]["status"]  = "stuck"
-                    _downloads[download_id]["message"] = (
-                        f"Peer {peer_username} was {reason}. Download cancelled."
-                    )
+                    _downloads[download_id]["message"] = failure_message
                     _downloads[download_id]["updated_at"] = time.time()
                     _persist_music_job(download_id)
                     await _send_music_notification_once(
                         download_id,
                         "terminal",
-                        f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} was {reason}.",
+                        f"Music download failed for {_music_title(_downloads[download_id])}: {failure_message}",
                     )
                     return
         except Exception as e:
@@ -634,16 +728,17 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     if _downloads[download_id].get("status") != "downloading":
         return  # was marked stuck inside the loop
     if completed == 0:
+        failure_message = f"Peer {peer_username} rejected or failed the transfer."
+        if await _try_next_music_candidate(download_id, failure_message):
+            return
         _downloads[download_id]["status"]  = "stuck"
-        _downloads[download_id]["message"] = (
-            f"Peer {peer_username} rejected or failed the transfer."
-        )
+        _downloads[download_id]["message"] = failure_message
         _downloads[download_id]["updated_at"] = time.time()
         _persist_music_job(download_id)
         await _send_music_notification_once(
             download_id,
             "terminal",
-            f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} rejected or failed the transfer.",
+            f"Music download failed for {_music_title(_downloads[download_id])}: {failure_message}",
         )
         return
     _downloads[download_id]["status"] = "enriching"
@@ -800,16 +895,17 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
                     logger.warning("Track %s: peer %s %s — cancelling", download_id, peer_username, reason)
                     if _transfer_id is not None:
                         await _slskd_cancel_download(peer_username, _transfer_id)
+                    failure_message = f"Peer {peer_username} was {reason}. Download cancelled."
+                    if await _try_next_music_candidate(download_id, failure_message):
+                        return
                     _downloads[download_id]["status"]  = "stuck"
-                    _downloads[download_id]["message"] = (
-                        f"Peer {peer_username} was {reason}. Download cancelled."
-                    )
+                    _downloads[download_id]["message"] = failure_message
                     _downloads[download_id]["updated_at"] = time.time()
                     _persist_music_job(download_id)
                     await _send_music_notification_once(
                         download_id,
                         "terminal",
-                        f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} was {reason}.",
+                        f"Music download failed for {_music_title(_downloads[download_id])}: {failure_message}",
                     )
                     return
         except Exception as e:
@@ -818,16 +914,17 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     if _downloads[download_id].get("status") != "downloading":
         return  # was marked stuck inside the loop
     if completed == 0:
+        failure_message = f"Peer {peer_username} rejected or failed the transfer."
+        if await _try_next_music_candidate(download_id, failure_message):
+            return
         _downloads[download_id]["status"]  = "stuck"
-        _downloads[download_id]["message"] = (
-            f"Peer {peer_username} rejected or failed the transfer."
-        )
+        _downloads[download_id]["message"] = failure_message
         _downloads[download_id]["updated_at"] = time.time()
         _persist_music_job(download_id)
         await _send_music_notification_once(
             download_id,
             "terminal",
-            f"Music download failed for {_music_title(_downloads[download_id])}: peer {peer_username} rejected or failed the transfer.",
+            f"Music download failed for {_music_title(_downloads[download_id])}: {failure_message}",
         )
         return
     _downloads[download_id]["status"] = "enriching"
@@ -1033,30 +1130,78 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
     if idx < 0 or idx >= len(results_raw):
         raise HTTPException(status_code=400, detail=f"result_index must be 1–{len(results_raw)}")
 
-    result = results_raw[idx]
-    peer = result["peer_username"]
+    requested_indices = [req.result_index, *req.fallback_result_indices]
+    ordered_indices: list[int] = []
+    for one_based in requested_indices:
+        if one_based not in ordered_indices:
+            ordered_indices.append(one_based)
+    for one_based in ordered_indices:
+        if one_based < 1 or one_based > len(results_raw):
+            raise HTTPException(status_code=400, detail=f"fallback result index {one_based} must be 1â€“{len(results_raw)}")
+
+    candidate_queue: list[dict] = []
+    for pos, one_based in enumerate(ordered_indices, start=1):
+        result = results_raw[one_based - 1]
+        peer = result["peer_username"]
+        if mode == "track":
+            filename = result["filename"]
+            file_size = int(result["size_mb"] * 1_048_576)
+            file_list = [{"filename": filename, "size": file_size}]
+            candidate_queue.append(
+                {
+                    "mode": "track",
+                    "result_index": one_based,
+                    "attempt_number": pos,
+                    "peer_username": peer,
+                    "files": file_list,
+                    "filename": filename,
+                    "title": result.get("file_basename", "").rsplit(".", 1)[0],
+                    "artist": "",
+                    "bytes_total": file_size,
+                    "quality_label": result["quality_label"],
+                }
+            )
+        else:
+            files = result["files"]
+            candidate_queue.append(
+                {
+                    "mode": "album",
+                    "result_index": one_based,
+                    "attempt_number": pos,
+                    "peer_username": peer,
+                    "files": files,
+                    "folder_path": result["folder_path"],
+                    "artist": "",
+                    "album": "",
+                    "bytes_total": sum(int(f.get("size") or 0) for f in files),
+                    "quality_label": result["quality_label"],
+                }
+            )
+
+    first_candidate = candidate_queue[0]
     download_id = str(uuid.uuid4())
 
     if mode == "track":
-        filename = result["filename"]
-        file_size = int(result["size_mb"] * 1_048_576)
-        file_list = [{"filename": filename, "size": file_size}]
-
         _downloads[download_id] = {
             "status": "starting",
             "language": req.language.lower(),
-            "peer_username": peer,
-            "files": file_list,
-            "filename": filename,
-            "title": result.get("file_basename", "").rsplit(".", 1)[0],
+            "peer_username": first_candidate["peer_username"],
+            "files": first_candidate["files"],
+            "filename": first_candidate["filename"],
+            "title": first_candidate["title"],
             "artist": "",
             "bytes_done": 0,
-            "bytes_total": file_size,
+            "bytes_total": first_candidate["bytes_total"],
             "progress_percent": 0.0,
             "speed_bytes_per_second": None,
             "eta_seconds": None,
             "files_done": 0,
             "files_total": 1,
+            "candidate_queue": candidate_queue,
+            "candidate_position": 0,
+            "attempt_history": [],
+            "active_result_index": first_candidate["result_index"],
+            "attempt_number": 1,
             "updated_at": time.time(),
             "started_at": time.time(),
             "start_notification_sent": False,
@@ -1064,43 +1209,41 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "terminal_notification_sent": False,
         }
         _persist_music_job(download_id)
-
-        await _slskd_download_files(peer, file_list)
-        _downloads[download_id]["status"] = "downloading"
-        _downloads[download_id]["updated_at"] = time.time()
-        _persist_music_job(download_id)
-        asyncio.create_task(_music_start_check(download_id, delay_seconds=20))
-        asyncio.create_task(_poll_and_enrich_track(download_id, peer, filename))
+        await _activate_music_candidate(download_id, first_candidate)
 
         return {
             "success": True,
             "download_id": download_id,
             "files": 1,
-            "peer": peer,
-            "track": result.get("file_basename", ""),
-            "quality": result["quality_label"],
+            "peer": first_candidate["peer_username"],
+            "track": first_candidate["title"],
+            "quality": first_candidate["quality_label"],
             "language": req.language,
             "destination": "Misc/",
+            "retry_chain": ordered_indices,
         }
 
     else:
-        files = result["files"]
-
         _downloads[download_id] = {
             "status": "starting",
             "language": req.language.lower(),
-            "peer_username": peer,
-            "files": files,  # list of {filename, size} dicts
-            "folder_path": result["folder_path"],
+            "peer_username": first_candidate["peer_username"],
+            "files": first_candidate["files"],
+            "folder_path": first_candidate["folder_path"],
             "artist": "",
             "album": "",
             "bytes_done": 0,
-            "bytes_total": sum(int(f.get("size") or 0) for f in files),
+            "bytes_total": first_candidate["bytes_total"],
             "progress_percent": 0.0,
             "speed_bytes_per_second": None,
             "eta_seconds": None,
             "files_done": 0,
-            "files_total": len(files),
+            "files_total": len(first_candidate["files"]),
+            "candidate_queue": candidate_queue,
+            "candidate_position": 0,
+            "attempt_history": [],
+            "active_result_index": first_candidate["result_index"],
+            "attempt_number": 1,
             "updated_at": time.time(),
             "started_at": time.time(),
             "start_notification_sent": False,
@@ -1108,21 +1251,16 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
             "terminal_notification_sent": False,
         }
         _persist_music_job(download_id)
-
-        await _slskd_download_files(peer, files)
-        _downloads[download_id]["status"] = "downloading"
-        _downloads[download_id]["updated_at"] = time.time()
-        _persist_music_job(download_id)
-        asyncio.create_task(_music_start_check(download_id, delay_seconds=25))
-        asyncio.create_task(_poll_and_enrich(download_id, peer, len(files)))
+        await _activate_music_candidate(download_id, first_candidate)
 
         return {
             "success": True,
             "download_id": download_id,
-            "files": len(files),
-            "peer": peer,
-            "quality": result["quality_label"],
+            "files": len(first_candidate["files"]),
+            "peer": first_candidate["peer_username"],
+            "quality": first_candidate["quality_label"],
             "language": req.language,
+            "retry_chain": ordered_indices,
         }
 
 
@@ -1199,6 +1337,9 @@ async def music_status(download_id: str, _: str = Depends(_require_api_key)):
             "files_done": stored.get("files_done"),
             "files_total": stored.get("files_total"),
             "updated_at": stored.get("updated_at"),
+            "active_result_index": (stored.get("payload") or {}).get("active_result_index"),
+            "retry_chain": (stored.get("payload") or {}).get("retry_chain"),
+            "attempt_history": (stored.get("payload") or {}).get("attempt_history"),
         }
     resp: dict = {
         "download_id": download_id,
@@ -1211,4 +1352,7 @@ async def music_status(download_id: str, _: str = Depends(_require_api_key)):
     for key in ("progress_percent", "bytes_done", "bytes_total", "speed_bytes_per_second", "eta_seconds", "files_done", "files_total", "updated_at"):
         if key in info:
             resp[key] = info.get(key)
+    resp["active_result_index"] = info.get("active_result_index")
+    resp["retry_chain"] = [c.get("result_index") for c in (info.get("candidate_queue") or [])]
+    resp["attempt_history"] = info.get("attempt_history") or []
     return resp

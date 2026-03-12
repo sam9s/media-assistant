@@ -47,6 +47,7 @@ POST $MEDIA_API_URL/music/download
 {
   "search_id": "...",       // from search response
   "result_index": 1,        // 1-based index Sam chose
+  "fallback_result_indices": [2,4], // optional ordered retry chain already approved by Sam
   "language": "english"     // "english" | "hindi" | "punjabi"
 }
 ```
@@ -64,6 +65,12 @@ Response:
 ```
 
 Returns immediately. Download + enrichment run in the background.
+
+Auto-fallback behavior:
+- Use `fallback_result_indices` only when Sam has explicitly approved the retry order.
+- Raven may automatically try the next approved peer only if the current peer fails before meaningful transfer begins.
+- The moment a peer shows real transfer, Raven must stop switching peers and let that job complete naturally.
+- If all approved peers fail, Raven should report the exact failure reason for each attempt.
 
 ### Manual Import
 Use this when Sam points to an existing FLAC file or folder instead of searching Soulseek.
@@ -168,6 +175,9 @@ Ask language + pick in one message. No need for two separate prompts.
 5. **WAIT** for Sam's pick + language.
 
 6. Call `POST /music/download` with `search_id`, `result_index`, `language`.
+   - If Sam approves a retry order such as `try 1, then 2, then 4`, include:
+     - `result_index: 1`
+     - `fallback_result_indices: [2,4]`
 
 7. After success:
 ```
