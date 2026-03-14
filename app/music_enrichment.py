@@ -861,6 +861,16 @@ async def enrich_single_track(
         logger.error("Track move failed %s → %s: %s", file, dest, e)
         return {"success": False, "message": f"move failed: {e}", "language": resolved_language}
 
+    old_source = Path(old_track_path)
+    if old_source != dest and old_source.exists():
+        _remove_path_quietly(old_source)
+    old_parent = old_source.parent
+    try:
+        if old_parent.exists() and old_parent != dest.parent and not any(old_parent.iterdir()):
+            old_parent.rmdir()
+    except Exception as e:
+        logger.warning("Old track source folder cleanup failed for %s: %s", old_parent, e)
+
     # --- Step 8: Navidrome scan ---
     scan_result = await trigger_scan()
     logger.info("Navidrome scan after track delivery: %s", scan_result)

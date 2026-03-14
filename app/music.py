@@ -102,10 +102,16 @@ async def _send_music_notification_once(download_id: str, kind: str, text: str) 
     if info.get(flag):
         return False
     sent = await send_telegram_message(text)
+    if not sent and kind == "terminal":
+        logger.warning("Music terminal notification failed for %s; retrying once", download_id)
+        await asyncio.sleep(5)
+        sent = await send_telegram_message(text)
     if sent:
         info[flag] = True
         info["updated_at"] = time.time()
         _persist_music_job(download_id)
+    else:
+        logger.warning("Music %s notification was not delivered for %s", kind, download_id)
     return sent
 
 
@@ -188,6 +194,18 @@ async def _maybe_send_music_progress_confirm(download_id: str) -> None:
     await _send_music_notification_once(download_id, "progress", " ".join(parts))
 
 
+async def _send_music_enrichment_start(download_id: str) -> None:
+    info = _downloads.get(download_id)
+    if not info or info.get("terminal_notification_sent"):
+        return
+    title = _music_title(info)
+    await _send_music_notification_once(
+        download_id,
+        "enriching",
+        f"{title} finished downloading. Enrichment has started.",
+    )
+
+
 def _persist_music_job(download_id: str) -> None:
     info = _downloads.get(download_id)
     if not info:
@@ -231,6 +249,38 @@ def _has_meaningful_music_transfer(info: dict) -> bool:
 def _music_no_start_timeout(info: dict) -> int:
     queue = info.get("candidate_queue") or []
     return _CHAINED_RETRY_NO_START_SECS if len(queue) > 1 else _STUCK_NO_START_SECS
+
+
+def _validate_downloaded_track_path(candidate: Path, expected_bytes: int | None = None) -> bool:
+    try:
+        if not candidate.exists() or not candidate.is_file():
+            return False
+        size = candidate.stat().st_size
+        if expected_bytes and size <= 0:
+            return False
+        with candidate.open("rb") as fh:
+            sample = fh.read(65536)
+        if len(sample) < min(65536, size):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+async def _resolve_downloaded_track_path(download_dir: Path, folder_name: str, basename: str, expected_bytes: int | None = None) -> Optional[Path]:
+    expected = download_dir / folder_name / basename
+    for _ in range(4):
+        if _validate_downloaded_track_path(expected, expected_bytes):
+            return expected
+        try:
+            candidates = list(download_dir.rglob(basename))
+        except Exception:
+            candidates = []
+        for candidate in sorted(candidates, key=lambda x: len(x.parts)):
+            if _validate_downloaded_track_path(candidate, expected_bytes):
+                return candidate
+        await asyncio.sleep(3)
+    return None
 
 
 async def _activate_music_candidate(download_id: str, candidate: dict) -> None:
@@ -330,6 +380,7 @@ class MusicDownloadRequest(BaseModel):
     search_id: str
     result_index: int      # 1-based index from search results
     fallback_result_indices: list[int] = []
+    fallback_order: list[int] = []
     language: str          # "english" | "hindi" | "punjabi"
 
 
@@ -753,6 +804,7 @@ async def _poll_and_enrich(download_id: str, peer_username: str, file_count: int
     _downloads[download_id]["progress_percent"] = 100.0
     _downloads[download_id]["updated_at"] = time.time()
     _persist_music_job(download_id)
+    await _send_music_enrichment_start(download_id)
 
     # Derive local folder path: slskd saves to {downloads_dir}/{album_folder_name}/
     # (slskd uses only the last path component as the folder name, no peer subfolder)
@@ -940,28 +992,35 @@ async def _poll_and_enrich_track(download_id: str, peer_username: str, filename:
     _downloads[download_id]["progress_percent"] = 100.0
     _downloads[download_id]["updated_at"] = time.time()
     _persist_music_job(download_id)
+    await _send_music_enrichment_start(download_id)
 
-    # slskd saves single file to {downloads_dir}/{last_folder_component}/{basename}
+    # slskd saves single file to {downloads_dir}/{last_folder_component}/{basename}, but on some peers/FUSE states
+    # the exact path can appear a few seconds later or under a slightly different resolved directory.
     folder_name = _remote_folder(filename).replace("\\", "/").rsplit("/", 1)[-1]
     file_basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
-    download_dir = "/mnt/cloud/gdrive/Media/Music/Downloads"
-    local_path = f"{download_dir}/{folder_name}/{file_basename}"
+    download_dir = Path("/mnt/cloud/gdrive/Media/Music/Downloads")
 
-    await asyncio.sleep(3)  # let filesystem flush
-
-    # Read actual bytes (bypasses GDrive VFS dentry cache which can lie about file existence)
-    try:
-        with open(local_path, "rb") as fh:
-            sample = fh.read(65536)
-        if len(sample) < 65536:
-            raise OSError(f"only {len(sample)} bytes readable")
-    except Exception as e:
-        logger.error("Track enrichment: file check failed for %s — %s", local_path, e)
-        _downloads[download_id]["status"]  = "stuck"
-        _downloads[download_id]["message"] = (
-            f"Peer {peer_username} signalled success but no valid file was written."
+    local_track = await _resolve_downloaded_track_path(
+        download_dir,
+        folder_name,
+        file_basename,
+        expected_bytes=int(info.get("bytes_total") or 0) or None,
+    )
+    if not local_track:
+        failure_message = f"Peer {peer_username} signalled success but no valid file was written."
+        logger.error("Track enrichment: file check failed for expected path %s/%s", folder_name, file_basename)
+        _downloads[download_id]["status"] = "stuck"
+        _downloads[download_id]["message"] = failure_message
+        _downloads[download_id]["updated_at"] = time.time()
+        _persist_music_job(download_id)
+        await _send_music_notification_once(
+            download_id,
+            "terminal",
+            f"Music download failed for {_music_title(_downloads[download_id])}: {failure_message}",
         )
         return
+
+    local_path = str(local_track)
 
     try:
         result = await enrich_single_track(
@@ -1139,7 +1198,8 @@ async def music_download(req: MusicDownloadRequest, _: str = Depends(_require_ap
     if idx < 0 or idx >= len(results_raw):
         raise HTTPException(status_code=400, detail=f"result_index must be 1–{len(results_raw)}")
 
-    requested_indices = [req.result_index, *req.fallback_result_indices]
+    fallback_indices = req.fallback_result_indices or req.fallback_order
+    requested_indices = [req.result_index, *fallback_indices]
     ordered_indices: list[int] = []
     for one_based in requested_indices:
         if one_based not in ordered_indices:

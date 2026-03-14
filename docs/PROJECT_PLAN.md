@@ -811,6 +811,172 @@ When Raven doesn't know the category, it asks: "Hollywood, Hindi, TV-Hollywood, 
 
 ---
 
+---
+
+## 16. GOOGLE ECOSYSTEM AUTOMATION
+
+**Built by:** Claude Sonnet | **Local path:** `D:\RAVENs\My_Google_AI_Assistant\` | **VPS path:** `/root/apps/chronicle/`
+**Full skill reference:** `D:\RAVENs\My_Google_AI_Assistant\SKILL.md`
+**Google account:** `sam27sep@gmail.com` | **GCP Project:** `ai-workspace-manager-489804`
+
+This is a parallel automation layer — separate from `sam-media-api` — that gives Raven full control over Sam's Google account. All scripts use direct Google REST API calls via `httpx`. No gws/Node.js required. Runs on both Windows (local) and VPS (Linux).
+
+---
+
+### Auth Architecture
+
+Single `credentials.json` file containing `client_id`, `client_secret`, `refresh_token`, and `type`.
+- Windows: `C:\Users\hp\.config\gws\credentials.json`
+- VPS: `/root/apps/chronicle/credentials.json`
+
+`sheets_worker.py::get_access_token()` exchanges the refresh_token for a short-lived access_token on every call. Token is cached in-process. Works across all Google APIs — Gmail, Drive, Calendar, Sheets.
+
+**OAuth scopes granted:**
+- `https://mail.google.com/` — full Gmail (read, write, delete, filters)
+- `https://www.googleapis.com/auth/drive` — Google Drive
+- `https://www.googleapis.com/auth/calendar` — Google Calendar
+- `https://www.googleapis.com/auth/gmail.settings.basic` — Gmail filter rules
+
+To re-auth (Windows, adds new scopes):
+```powershell
+gws auth login --scopes "https://mail.google.com/,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/gmail.settings.basic"
+python gws_refresh_creds.py
+```
+
+---
+
+### Scripts
+
+#### `gmail_reader.py` — Read Gmail
+Modes: `list` | `read` | `unread` | `labels`
+- List emails by any Gmail search query (subject, sender, date)
+- Read full email body by message ID
+- Count unread messages per label/category
+- List all labels (system + user-created)
+
+#### `gmail_worker.py` — Bulk Gmail Operations
+Bulk `trash` / `archive` / `mark_read` / `permanent_delete` on any set of emails matching a Gmail query.
+Uses Python-level pagination (safe for 100,000+ emails, no subprocess timeout risk).
+- `--query` — any Gmail search query
+- `--action` — trash | archive | mark_read | permanent_delete
+- `--dry-run` — count only, no action
+- `--limit N` — process only N emails per run (for huge volumes)
+
+#### `gmail_analyzer.py` — Inbox Intelligence
+Modes: `top-senders` | `by-domain` | `old-emails`
+Scans inbox and ranks senders by volume. Key tool for autonomous inbox decisions before bulk cleanup.
+
+#### `gmail_filters.py` — Gmail Filter Rules
+Create, list, delete Gmail filter rules via Gmail Settings API.
+- `--mode create --from ADDRESS` — auto-trash future emails from that address
+- `--mode create --query "from:(@domain.com)"` — domain-wide rule
+- `--action` — spam-trash | trash | archive | mark-read (default: spam-trash → TRASH + remove INBOX)
+- Note: Gmail Settings API does not allow adding SPAM label via filters; TRASH is the strongest programmatic action.
+
+#### `drive_worker.py` — Google Drive Management
+Modes: `about` | `search` | `trash` | `batch-trash` | `empty-trash` | `duplicates`
+- Search files by Drive query syntax
+- Trash individual files or batch-trash by query (dry-run + --force)
+- Empty trash immediately (space reclaim)
+- Find duplicate files across full Drive by MD5 checksum
+
+#### `calendar_worker.py` — Google Calendar
+Modes: `today` | `week` | `list` | `search` | `create` | `delete`
+- All times input/displayed in IST (Asia/Kolkata)
+- Create events with title, date, time (HH:MM 24h), duration, location, description
+- Search events by keyword (90 days back + 365 days forward by default)
+- Delete by event ID with confirmation (`--force` for agent use)
+
+#### `sheets_worker.py` — Chronicle (Google Sheets)
+Core data layer. Reads and writes "Sam's Chronicle" — a structured Google Sheet with 7 tabs.
+Chronicle ID: `15mEdUsQuDO2BYmDqHJ2gqvB_iNHuaRRCMBBhvBbgjyE`
+Tabs: `MediaLog` | `Finance` | `Queue` | `Preferences` | `ActionLog` | `Goals` | `Contacts`
+Also provides `get_access_token()` imported by all other scripts.
+
+#### `lastfm_sync.py` — Last.fm → Chronicle
+Fetches music scrobbles (Last.fm account: `sam27s`) → writes to MediaLog tab.
+Incremental state-file based. Also infers genre preferences → Preferences tab.
+
+#### `trakt_sync.py` — Trakt.tv → Chronicle
+Fetches watched movies/TV history (Trakt account: `sam9s`) → MediaLog.
+Watchlist → Queue tab (first run only).
+
+#### `bank_email_parser.py` — Bank Emails → Chronicle Finance
+Parses bank transaction alert emails from Gmail → Finance tab.
+Supported banks:
+- Fi Money / Federal Bank (`transactions@fi.money`)
+- DBS digibank (`digibankalerts@dbs.com`)
+- Equitas Bank (`esfb-alerts@equitas.bank.in`)
+
+#### `chronicle_sync.py` — Daily Sync Orchestrator (LIVE ON VPS)
+Runs all three Chronicle data sources (Last.fm + Trakt + bank emails) in sequence.
+Args: `--preview`, `--days N`, `--skip-music`, `--skip-trakt`, `--skip-bank`
+
+#### `chronicle_briefing.py` — Morning Briefing (LIVE ON VPS)
+Sends a daily 7:00 AM IST Telegram message to Sam covering:
+- Music: scrobble count + top artists
+- Watched: movies/TV from Trakt
+- Finance: last 5 transactions across all banks (sorted by date)
+- VPS Health: container issues, disk usage, RAM, GDrive mount status
+- Sync status: per-source success/failure icons
+
+---
+
+### VPS Deployment
+
+All scripts deployed to `/root/apps/chronicle/` with Python venv at `venv/`.
+Credentials at `/root/apps/chronicle/credentials.json` (copied from media-api `.env` for Telegram; Google creds separate).
+
+**Live cron jobs (CRON_TZ=Asia/Kolkata):**
+
+| Time (IST) | Script | Purpose |
+|------------|--------|---------|
+| 01:00 daily | `chronicle_sync.py` | Overnight sync: Last.fm + Trakt + bank emails |
+| 07:00 daily | `chronicle_briefing.py` | Morning briefing → Telegram |
+| 13:00 daily | `chronicle_sync.py` | Midday sync: keeps Last.fm current (Sam listens frequently) |
+
+Log: `/root/apps/chronicle/logs/chronicle_sync.log`
+
+Manual sync (run anytime):
+```bash
+ssh root@69.62.73.167
+cd /root/apps/chronicle
+GOOGLE_CREDENTIALS_FILE=/root/apps/chronicle/credentials.json venv/bin/python chronicle_sync.py
+```
+
+---
+
+### Telegram Integration
+
+Uses the same bot token/chat ID as `sam-media-api` Telegram notifications.
+Credentials sourced from `/root/apps/sam-media-api/.env` (`RAVEN_TELEGRAM_BOT_TOKEN` + `RAVEN_TELEGRAM_CHAT_ID`).
+Morning briefing confirmed live and delivering to Sam's Telegram at 7 AM IST.
+
+---
+
+### Chronicle Skill
+
+Cross-reference: `d:\RAVENs\media_assistant\skills\chronicle\SKILL.md`
+This skill tells Raven how to read/write Sam's Chronicle sheet, log media activity, and cross-reference preferences before making recommendations.
+
+---
+
+### Next Phase: Two-Way Telegram Bot (Planned)
+
+All Google ecosystem tools are built and working. The next step is a **Telegram bot listener** on the VPS that lets Sam issue natural-language commands and have Raven execute them and reply — all from Telegram on his phone.
+
+Example interactions:
+- "What did I spend this week?" → queries Chronicle Finance tab, replies with summary
+- "What's on my calendar tomorrow?" → calls calendar_worker.py, replies with events
+- "Create an event: dentist Friday 11am" → calls calendar_worker.py --mode create, confirms
+- "Trash all emails from newsletter@site.com" → calls gmail_worker.py + gmail_filters.py, confirms
+- "How many songs did I scrobble this month?" → queries Chronicle MediaLog, replies
+
+Architecture: Telegram webhook/polling listener on VPS → intent routing → existing Python scripts → Telegram reply.
+All underlying tools are ready. This phase is purely the conversational layer on top.
+
+---
+
 ## 15. FUTURE PHASES (not yet built)
 
 - **Immich photo search** â€” `GET /photos/search`

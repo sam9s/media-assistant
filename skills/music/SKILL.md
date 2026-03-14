@@ -68,6 +68,8 @@ Returns immediately. Download + enrichment run in the background.
 
 Auto-fallback behavior:
 - Use `fallback_result_indices` only when Sam has explicitly approved the retry order.
+- Do not invent or prefer `fallback_order`; use `fallback_result_indices` as the canonical field.
+- The backend currently accepts `fallback_order` only as a compatibility alias, not as the preferred contract.
 - Raven may automatically try the next approved peer only if the current peer fails before meaningful transfer begins.
 - For approved retry chains, "no progress" should not be treated as indefinite limbo. If a peer sits at zero meaningful transfer through the startup window / short no-progress timeout, Raven should move to the next approved peer automatically.
 - The moment a peer shows real transfer, Raven must stop switching peers and let that job complete naturally.
